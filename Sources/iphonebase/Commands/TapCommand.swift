@@ -29,6 +29,9 @@ struct TapCommand: AsyncParsableCommand {
     @Flag(name: .long, help: "Output as JSON.")
     var json = false
 
+    @Flag(name: [.short, .long], help: "Verbose debug output.")
+    var verbose = false
+
     func validate() throws {
         if text == nil && (x == nil || y == nil) {
             throw ValidationError("Provide either X Y coordinates or --text to find an element.")
@@ -79,6 +82,7 @@ struct TapCommand: AsyncParsableCommand {
         try wm.bringToFront()
 
         let injector = InputInjector()
+        injector.verbose = verbose
         try injector.connect()
         defer { injector.disconnect() }
 

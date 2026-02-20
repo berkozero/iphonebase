@@ -92,7 +92,8 @@ public final class InputInjector {
     private var sockfd: Int32 = -1
     private var clientSocketPath: String = ""
     private var connected = false
-    private var heartbeatTimer: Timer?
+    private var heartbeatSource: DispatchSourceTimer?
+    public var verbose = false
 
     private static let serverDir = "/Library/Application Support/org.pqrs/tmp/rootonly/vhidd_server"
     private static let clientDir = "/Library/Application Support/org.pqrs/tmp/rootonly/vhidd_client"
@@ -180,21 +181,24 @@ public final class InputInjector {
         }
 
         connected = true
+        if verbose { FileHandle.standardError.write(Data("[iphonebase] Socket connected\n".utf8)) }
 
         // Initialize virtual devices
         initializeDevices()
+        if verbose { FileHandle.standardError.write(Data("[iphonebase] Virtual devices initialized\n".utf8)) }
 
         // Start heartbeat
         startHeartbeat()
 
         // Wait for devices to be ready
-        usleep(500_000) // 500ms
+        usleep(1_000_000) // 1s — give daemon time to register virtual devices
+        if verbose { FileHandle.standardError.write(Data("[iphonebase] Ready\n".utf8)) }
     }
 
     /// Disconnect and clean up
     public func disconnect() {
-        heartbeatTimer?.invalidate()
-        heartbeatTimer = nil
+        heartbeatSource?.cancel()
+        heartbeatSource = nil
 
         if sockfd >= 0 {
             close(sockfd)
@@ -213,33 +217,45 @@ public final class InputInjector {
     public func tap(x: Double, y: Double) throws {
         guard connected else { throw InputInjectorError.notConnected }
 
-        // Warp system cursor to target
-        CGAssociateMouseAndMouseCursorPosition(boolean_t(0))
-        CGWarpMouseCursorPosition(CGPoint(x: x, y: y))
-        usleep(15_000)
+        let point = CGPoint(x: x, y: y)
+        if verbose { FileHandle.standardError.write(Data("[iphonebase] Tap at (\(x), \(y))\n".utf8)) }
 
-        // Nudge-sync: align virtual HID device with warped position
-        var nudge1 = PointingReport()
-        nudge1.x = 1
-        sendRequest(.postPointingReport, payload: nudge1.toBytes())
-        usleep(10_000)
+        // Send heartbeat before action
+        sendHeartbeat()
+        usleep(50_000)
 
-        var nudge2 = PointingReport()
-        nudge2.x = -1
-        sendRequest(.postPointingReport, payload: nudge2.toBytes())
-        usleep(10_000)
+        // Strategy: CGWarp cursor to target, then use Karabiner virtual HID for the click.
+        // iPhone Mirroring blocks CGEvent clicks but accepts virtual HID clicks.
 
-        // Click
+        // 1. Move cursor to target position
+        CGWarpMouseCursorPosition(point)
+        usleep(30_000)
+
+        // 2. Send a small virtual HID mouse move to "wake" the virtual pointer at the warped position
+        //    This syncs the virtual HID pointer with the warped system cursor.
+        for _ in 0..<3 {
+            var nudge = PointingReport()
+            nudge.x = 1
+            sendRequest(.postPointingReport, payload: nudge.toBytes())
+            usleep(8_000)
+            var back = PointingReport()
+            back.x = -1
+            sendRequest(.postPointingReport, payload: back.toBytes())
+            usleep(8_000)
+        }
+        usleep(30_000)
+
+        // 3. Click via virtual HID
         var down = PointingReport()
-        down.buttons = 0x01  // left button
+        down.buttons = 0x01
         sendRequest(.postPointingReport, payload: down.toBytes())
-        usleep(80_000)
+        usleep(120_000)  // 120ms hold
 
         let up = PointingReport()
         sendRequest(.postPointingReport, payload: up.toBytes())
         usleep(50_000)
 
-        CGAssociateMouseAndMouseCursorPosition(boolean_t(1))
+        if verbose { FileHandle.standardError.write(Data("[iphonebase] Tap complete (virtual HID)\n".utf8)) }
     }
 
     /// Double-tap at absolute screen coordinates
@@ -284,6 +300,11 @@ public final class InputInjector {
     public func swipe(direction: SwipeDirection, fromX: Double, fromY: Double, distance: Double = 300, steps: Int = 20) throws {
         guard connected else { throw InputInjectorError.notConnected }
 
+        if verbose { FileHandle.standardError.write(Data("[iphonebase] Swipe \(direction) from (\(fromX), \(fromY)) dist \(distance)\n".utf8)) }
+
+        sendHeartbeat()
+        usleep(50_000)
+
         let (dx, dy): (Double, Double) = {
             switch direction {
             case .up:    return (0, -distance)
@@ -293,25 +314,28 @@ public final class InputInjector {
             }
         }()
 
-        CGAssociateMouseAndMouseCursorPosition(boolean_t(0))
+        // Warp cursor to start position
         CGWarpMouseCursorPosition(CGPoint(x: fromX, y: fromY))
-        usleep(15_000)
+        usleep(30_000)
 
-        // Nudge-sync
-        var nudge1 = PointingReport()
-        nudge1.x = 1
-        sendRequest(.postPointingReport, payload: nudge1.toBytes())
-        usleep(10_000)
-        var nudge2 = PointingReport()
-        nudge2.x = -1
-        sendRequest(.postPointingReport, payload: nudge2.toBytes())
-        usleep(10_000)
+        // Nudge-sync (multiple times for reliability)
+        for _ in 0..<3 {
+            var nudge = PointingReport()
+            nudge.x = 1
+            sendRequest(.postPointingReport, payload: nudge.toBytes())
+            usleep(8_000)
+            var back = PointingReport()
+            back.x = -1
+            sendRequest(.postPointingReport, payload: back.toBytes())
+            usleep(8_000)
+        }
+        usleep(30_000)
 
         // Mouse down
         var down = PointingReport()
         down.buttons = 0x01
         sendRequest(.postPointingReport, payload: down.toBytes())
-        usleep(50_000)
+        usleep(80_000)
 
         // Drag in steps using relative moves
         let stepDx = dx / Double(steps)
@@ -323,7 +347,7 @@ public final class InputInjector {
             move.x = Int8(clamping: Int(stepDx))
             move.y = Int8(clamping: Int(stepDy))
             sendRequest(.postPointingReport, payload: move.toBytes())
-            usleep(10_000)
+            usleep(15_000)
         }
 
         // Mouse up
@@ -331,7 +355,7 @@ public final class InputInjector {
         sendRequest(.postPointingReport, payload: up.toBytes())
         usleep(50_000)
 
-        CGAssociateMouseAndMouseCursorPosition(boolean_t(1))
+        if verbose { FileHandle.standardError.write(Data("[iphonebase] Swipe complete\n".utf8)) }
     }
 
     /// Type a string character by character
@@ -391,10 +415,14 @@ public final class InputInjector {
         // Send heartbeat immediately
         sendHeartbeat()
 
-        // Schedule repeating heartbeat every 3 seconds
-        heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+        // Use GCD timer (works without RunLoop in CLI apps)
+        let timer = DispatchSource.makeTimerSource(queue: .global())
+        timer.schedule(deadline: .now() + 3.0, repeating: 3.0)
+        timer.setEventHandler { [weak self] in
             self?.sendHeartbeat()
         }
+        timer.resume()
+        heartbeatSource = timer
     }
 
     private func sendHeartbeat() {
