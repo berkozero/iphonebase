@@ -90,6 +90,18 @@ iphonebase (CLI)
 - Works with any app — no WebDriverAgent, no XCTest runner
 - Your phone stays locked and secure
 
+## OpenClaw Integration
+
+iphonebase ships with an [OpenClaw](https://github.com/openclaw/openclaw) skill so the agent can control your iPhone out of the box.
+
+**Install the skill:**
+
+```bash
+cp -r skills/iphonebase ~/.openclaw/skills/
+```
+
+Once installed, use `/iphonebase` in OpenClaw chat or let the agent discover it automatically when you ask it to interact with your phone.
+
 ## Limitations
 
 - One phone at a time
