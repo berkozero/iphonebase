@@ -22,7 +22,7 @@ Built for AI agents (OpenClaw, Claude Code, MCP clients) but works standalone fr
 ## Install
 
 ```bash
-git clone https://github.com/your-username/iphonebase.git
+git clone https://github.com/berkozero/iphonebase.git
 cd iphonebase
 swift build -c release
 cp .build/release/iphonebase /usr/local/bin/
