@@ -1,8 +1,22 @@
+# macOS
 .DS_Store
+
+# Swift Package Manager
 /.build
 /Packages
+
+# Xcode
 xcuserdata/
 DerivedData/
-.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
-.netrc
 *.xcodeproj
+.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
+
+# Credentials
+.netrc
+
+# Claude Code
+.claude/
+
+# Editor
+*.swp
+*~
