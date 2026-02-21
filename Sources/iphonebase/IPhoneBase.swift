@@ -16,6 +16,10 @@ struct IPhoneBase: AsyncParsableCommand {
             KeyCommand.self,
             HomeCommand.self,
             LaunchCommand.self,
+            WaitForCommand.self,
+            ScrollCommand.self,
+            DragCommand.self,
+            DoctorCommand.self,
         ],
         defaultSubcommand: StatusCommand.self
     )

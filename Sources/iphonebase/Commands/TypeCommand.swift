@@ -16,26 +16,25 @@ struct TypeCommand: AsyncParsableCommand {
 
     func run() async throws {
         let wm = WindowManager()
-        try wm.bringToFront()
 
         let injector = InputInjector()
+        injector.windowManager = wm
         try injector.connect()
         defer { injector.disconnect() }
 
         try injector.typeText(text)
 
         if json {
-            let result: [String: Any] = [
-                "action": "type",
-                "text": text,
-                "length": text.count,
-            ]
-            if let data = try? JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted]),
-               let str = String(data: data, encoding: .utf8) {
-                print(str)
-            }
+            let data = TypeData(text: text, length: text.count)
+            let result = ActionResult.ok(action: "type", data: data)
+            result.printJSON()
         } else {
             print("Typed \(text.count) character(s)")
         }
     }
+}
+
+private struct TypeData: Encodable {
+    let text: String
+    let length: Int
 }

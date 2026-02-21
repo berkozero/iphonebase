@@ -22,7 +22,15 @@ struct SwipeCommand: AsyncParsableCommand {
 
     func run() async throws {
         let wm = WindowManager()
-        let window = try wm.findWindow()
+
+        let injector = InputInjector()
+        injector.windowManager = wm
+        try injector.connect()
+        defer { injector.disconnect() }
+
+        // Ensure focus and get fresh bounds before coordinate math
+        try injector.ensureFocus()
+        let bounds = injector.windowBounds!
 
         let startX: Double
         let startY: Double
@@ -32,34 +40,25 @@ struct SwipeCommand: AsyncParsableCommand {
             guard parts.count == 2 else {
                 throw ValidationError("--from must be in format x,y (e.g., --from 200,400)")
             }
-            startX = window.bounds.origin.x + parts[0]
-            startY = window.bounds.origin.y + parts[1]
+            startX = bounds.origin.x + parts[0]
+            startY = bounds.origin.y + parts[1]
         } else {
             // Default: center of window
-            startX = window.bounds.origin.x + window.bounds.width / 2
-            startY = window.bounds.origin.y + window.bounds.height / 2
+            startX = bounds.origin.x + bounds.width / 2
+            startY = bounds.origin.y + bounds.height / 2
         }
-
-        try wm.bringToFront()
-
-        let injector = InputInjector()
-        try injector.connect()
-        defer { injector.disconnect() }
 
         try injector.swipe(direction: direction, fromX: startX, fromY: startY, distance: distance)
 
         if json {
-            let result: [String: Any] = [
-                "action": "swipe",
-                "direction": direction.rawValue,
-                "from_x": Int(startX),
-                "from_y": Int(startY),
-                "distance": Int(distance),
-            ]
-            if let data = try? JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted]),
-               let str = String(data: data, encoding: .utf8) {
-                print(str)
-            }
+            let data = SwipeData(
+                direction: direction.rawValue,
+                fromX: Int(startX),
+                fromY: Int(startY),
+                distance: Int(distance)
+            )
+            let result = ActionResult.ok(action: "swipe", data: data)
+            result.printJSON()
         } else {
             print("Swiped \(direction.rawValue) from (\(Int(startX)), \(Int(startY))) distance \(Int(distance))")
         }
@@ -67,3 +66,17 @@ struct SwipeCommand: AsyncParsableCommand {
 }
 
 extension SwipeDirection: ExpressibleByArgument {}
+
+private struct SwipeData: Encodable {
+    let direction: String
+    let fromX: Int
+    let fromY: Int
+    let distance: Int
+
+    enum CodingKeys: String, CodingKey {
+        case direction
+        case fromX = "from_x"
+        case fromY = "from_y"
+        case distance
+    }
+}

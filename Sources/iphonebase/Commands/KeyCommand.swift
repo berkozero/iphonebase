@@ -38,27 +38,26 @@ struct KeyCommand: AsyncParsableCommand {
         }
 
         let wm = WindowManager()
-        try wm.bringToFront()
 
         let injector = InputInjector()
+        injector.windowManager = wm
         try injector.connect()
         defer { injector.disconnect() }
 
         try injector.pressKey(keycode: keycode, modifiers: mods)
 
         if json {
-            let result: [String: Any] = [
-                "action": "key",
-                "key": key,
-                "modifier": modifier ?? "",
-            ]
-            if let data = try? JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted]),
-               let str = String(data: data, encoding: .utf8) {
-                print(str)
-            }
+            let data = KeyData(key: key, modifier: modifier ?? "")
+            let result = ActionResult.ok(action: "key", data: data)
+            result.printJSON()
         } else {
             let modLabel = modifier.map { " (modifier: \($0))" } ?? ""
             print("Pressed key: \(key)\(modLabel)")
         }
     }
+}
+
+private struct KeyData: Encodable {
+    let key: String
+    let modifier: String
 }

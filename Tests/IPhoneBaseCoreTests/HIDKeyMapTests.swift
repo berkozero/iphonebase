@@ -1,172 +1,202 @@
-import XCTest
+import Testing
 @testable import IPhoneBaseCore
 
-final class HIDKeyMapTests: XCTestCase {
+// MARK: - lookup()
 
-    // MARK: - lookup()
+@Suite("HIDKeyMap.lookup")
+struct HIDKeyMapLookupTests {
 
-    func testLookupLowercaseLetters() {
+    @Test("Lowercase letters map to unshifted keycodes")
+    func lowercaseLetters() {
         let a = HIDKeyMap.lookup("a")
-        XCTAssertEqual(a?.keycode, HIDKeyCode.a)
-        XCTAssertEqual(a?.modifiers, HIDModifier([]))
+        #expect(a?.keycode == HIDKeyCode.a)
+        #expect(a?.modifiers == HIDModifier([]))
 
         let z = HIDKeyMap.lookup("z")
-        XCTAssertEqual(z?.keycode, HIDKeyCode.z)
-        XCTAssertEqual(z?.modifiers, HIDModifier([]))
+        #expect(z?.keycode == HIDKeyCode.z)
+        #expect(z?.modifiers == HIDModifier([]))
     }
 
-    func testLookupUppercaseLetters() {
+    @Test("Uppercase letters map to shifted keycodes")
+    func uppercaseLetters() {
         let A = HIDKeyMap.lookup("A")
-        XCTAssertEqual(A?.keycode, HIDKeyCode.a)
-        XCTAssertEqual(A?.modifiers, .leftShift)
+        #expect(A?.keycode == HIDKeyCode.a)
+        #expect(A?.modifiers == .leftShift)
 
         let Z = HIDKeyMap.lookup("Z")
-        XCTAssertEqual(Z?.keycode, HIDKeyCode.z)
-        XCTAssertEqual(Z?.modifiers, .leftShift)
+        #expect(Z?.keycode == HIDKeyCode.z)
+        #expect(Z?.modifiers == .leftShift)
     }
 
-    func testLookupDigits() {
-        XCTAssertEqual(HIDKeyMap.lookup("0")?.keycode, HIDKeyCode.key0)
-        XCTAssertEqual(HIDKeyMap.lookup("1")?.keycode, HIDKeyCode.key1)
-        XCTAssertEqual(HIDKeyMap.lookup("9")?.keycode, HIDKeyCode.key9)
-        XCTAssertEqual(HIDKeyMap.lookup("5")?.modifiers, HIDModifier([]))
+    @Test("Digits map to unshifted keycodes")
+    func digits() {
+        #expect(HIDKeyMap.lookup("0")?.keycode == HIDKeyCode.key0)
+        #expect(HIDKeyMap.lookup("1")?.keycode == HIDKeyCode.key1)
+        #expect(HIDKeyMap.lookup("9")?.keycode == HIDKeyCode.key9)
+        #expect(HIDKeyMap.lookup("5")?.modifiers == HIDModifier([]))
     }
 
-    func testLookupShiftedSymbols() {
-        XCTAssertEqual(HIDKeyMap.lookup("!")?.keycode, HIDKeyCode.key1)
-        XCTAssertEqual(HIDKeyMap.lookup("!")?.modifiers, .leftShift)
-        XCTAssertEqual(HIDKeyMap.lookup("@")?.keycode, HIDKeyCode.key2)
-        XCTAssertEqual(HIDKeyMap.lookup("#")?.keycode, HIDKeyCode.key3)
-        XCTAssertEqual(HIDKeyMap.lookup("$")?.keycode, HIDKeyCode.key4)
-        XCTAssertEqual(HIDKeyMap.lookup("%")?.keycode, HIDKeyCode.key5)
-        XCTAssertEqual(HIDKeyMap.lookup("^")?.keycode, HIDKeyCode.key6)
-        XCTAssertEqual(HIDKeyMap.lookup("&")?.keycode, HIDKeyCode.key7)
-        XCTAssertEqual(HIDKeyMap.lookup("*")?.keycode, HIDKeyCode.key8)
-        XCTAssertEqual(HIDKeyMap.lookup("(")?.keycode, HIDKeyCode.key9)
-        XCTAssertEqual(HIDKeyMap.lookup(")")?.keycode, HIDKeyCode.key0)
+    @Test("Shifted symbols (! @ # etc.) map to shifted digit keycodes")
+    func shiftedSymbols() {
+        #expect(HIDKeyMap.lookup("!")?.keycode == HIDKeyCode.key1)
+        #expect(HIDKeyMap.lookup("!")?.modifiers == .leftShift)
+        #expect(HIDKeyMap.lookup("@")?.keycode == HIDKeyCode.key2)
+        #expect(HIDKeyMap.lookup("#")?.keycode == HIDKeyCode.key3)
+        #expect(HIDKeyMap.lookup("$")?.keycode == HIDKeyCode.key4)
+        #expect(HIDKeyMap.lookup("%")?.keycode == HIDKeyCode.key5)
+        #expect(HIDKeyMap.lookup("^")?.keycode == HIDKeyCode.key6)
+        #expect(HIDKeyMap.lookup("&")?.keycode == HIDKeyCode.key7)
+        #expect(HIDKeyMap.lookup("*")?.keycode == HIDKeyCode.key8)
+        #expect(HIDKeyMap.lookup("(")?.keycode == HIDKeyCode.key9)
+        #expect(HIDKeyMap.lookup(")")?.keycode == HIDKeyCode.key0)
     }
 
-    func testLookupUnshiftedPunctuation() {
-        XCTAssertEqual(HIDKeyMap.lookup(" ")?.keycode, HIDKeyCode.space)
-        XCTAssertEqual(HIDKeyMap.lookup("-")?.keycode, HIDKeyCode.minus)
-        XCTAssertEqual(HIDKeyMap.lookup("-")?.modifiers, HIDModifier([]))
-        XCTAssertEqual(HIDKeyMap.lookup("=")?.keycode, HIDKeyCode.equal)
-        XCTAssertEqual(HIDKeyMap.lookup("[")?.keycode, HIDKeyCode.leftBracket)
-        XCTAssertEqual(HIDKeyMap.lookup("]")?.keycode, HIDKeyCode.rightBracket)
-        XCTAssertEqual(HIDKeyMap.lookup("\\")?.keycode, HIDKeyCode.backslash)
-        XCTAssertEqual(HIDKeyMap.lookup(";")?.keycode, HIDKeyCode.semicolon)
-        XCTAssertEqual(HIDKeyMap.lookup("'")?.keycode, HIDKeyCode.quote)
-        XCTAssertEqual(HIDKeyMap.lookup("`")?.keycode, HIDKeyCode.graveAccent)
-        XCTAssertEqual(HIDKeyMap.lookup(",")?.keycode, HIDKeyCode.comma)
-        XCTAssertEqual(HIDKeyMap.lookup(".")?.keycode, HIDKeyCode.period)
-        XCTAssertEqual(HIDKeyMap.lookup("/")?.keycode, HIDKeyCode.slash)
+    @Test("Unshifted punctuation maps correctly")
+    func unshiftedPunctuation() {
+        #expect(HIDKeyMap.lookup(" ")?.keycode == HIDKeyCode.space)
+        #expect(HIDKeyMap.lookup("-")?.keycode == HIDKeyCode.minus)
+        #expect(HIDKeyMap.lookup("-")?.modifiers == HIDModifier([]))
+        #expect(HIDKeyMap.lookup("=")?.keycode == HIDKeyCode.equal)
+        #expect(HIDKeyMap.lookup("[")?.keycode == HIDKeyCode.leftBracket)
+        #expect(HIDKeyMap.lookup("]")?.keycode == HIDKeyCode.rightBracket)
+        #expect(HIDKeyMap.lookup("\\")?.keycode == HIDKeyCode.backslash)
+        #expect(HIDKeyMap.lookup(";")?.keycode == HIDKeyCode.semicolon)
+        #expect(HIDKeyMap.lookup("'")?.keycode == HIDKeyCode.quote)
+        #expect(HIDKeyMap.lookup("`")?.keycode == HIDKeyCode.graveAccent)
+        #expect(HIDKeyMap.lookup(",")?.keycode == HIDKeyCode.comma)
+        #expect(HIDKeyMap.lookup(".")?.keycode == HIDKeyCode.period)
+        #expect(HIDKeyMap.lookup("/")?.keycode == HIDKeyCode.slash)
     }
 
-    func testLookupShiftedPunctuation() {
-        XCTAssertEqual(HIDKeyMap.lookup("_")?.keycode, HIDKeyCode.minus)
-        XCTAssertEqual(HIDKeyMap.lookup("_")?.modifiers, .leftShift)
-        XCTAssertEqual(HIDKeyMap.lookup("+")?.keycode, HIDKeyCode.equal)
-        XCTAssertEqual(HIDKeyMap.lookup("{")?.keycode, HIDKeyCode.leftBracket)
-        XCTAssertEqual(HIDKeyMap.lookup("}")?.keycode, HIDKeyCode.rightBracket)
-        XCTAssertEqual(HIDKeyMap.lookup("|")?.keycode, HIDKeyCode.backslash)
-        XCTAssertEqual(HIDKeyMap.lookup(":")?.keycode, HIDKeyCode.semicolon)
-        XCTAssertEqual(HIDKeyMap.lookup("\"")?.keycode, HIDKeyCode.quote)
-        XCTAssertEqual(HIDKeyMap.lookup("~")?.keycode, HIDKeyCode.graveAccent)
-        XCTAssertEqual(HIDKeyMap.lookup("<")?.keycode, HIDKeyCode.comma)
-        XCTAssertEqual(HIDKeyMap.lookup(">")?.keycode, HIDKeyCode.period)
-        XCTAssertEqual(HIDKeyMap.lookup("?")?.keycode, HIDKeyCode.slash)
+    @Test("Shifted punctuation maps correctly")
+    func shiftedPunctuation() {
+        #expect(HIDKeyMap.lookup("_")?.keycode == HIDKeyCode.minus)
+        #expect(HIDKeyMap.lookup("_")?.modifiers == .leftShift)
+        #expect(HIDKeyMap.lookup("+")?.keycode == HIDKeyCode.equal)
+        #expect(HIDKeyMap.lookup("{")?.keycode == HIDKeyCode.leftBracket)
+        #expect(HIDKeyMap.lookup("}")?.keycode == HIDKeyCode.rightBracket)
+        #expect(HIDKeyMap.lookup("|")?.keycode == HIDKeyCode.backslash)
+        #expect(HIDKeyMap.lookup(":")?.keycode == HIDKeyCode.semicolon)
+        #expect(HIDKeyMap.lookup("\"")?.keycode == HIDKeyCode.quote)
+        #expect(HIDKeyMap.lookup("~")?.keycode == HIDKeyCode.graveAccent)
+        #expect(HIDKeyMap.lookup("<")?.keycode == HIDKeyCode.comma)
+        #expect(HIDKeyMap.lookup(">")?.keycode == HIDKeyCode.period)
+        #expect(HIDKeyMap.lookup("?")?.keycode == HIDKeyCode.slash)
     }
 
-    func testLookupSpecialCharacters() {
-        XCTAssertEqual(HIDKeyMap.lookup("\n")?.keycode, HIDKeyCode.returnKey)
-        XCTAssertEqual(HIDKeyMap.lookup("\n")?.modifiers, HIDModifier([]))
-        XCTAssertEqual(HIDKeyMap.lookup("\t")?.keycode, HIDKeyCode.tab)
+    @Test("Special characters (newline, tab) map correctly")
+    func specialCharacters() {
+        #expect(HIDKeyMap.lookup("\n")?.keycode == HIDKeyCode.returnKey)
+        #expect(HIDKeyMap.lookup("\n")?.modifiers == HIDModifier([]))
+        #expect(HIDKeyMap.lookup("\t")?.keycode == HIDKeyCode.tab)
     }
 
-    func testLookupUnknownCharacters() {
-        XCTAssertNil(HIDKeyMap.lookup("\u{00E9}"))  // e-acute
-        XCTAssertNil(HIDKeyMap.lookup("\u{1F600}"))  // emoji
+    @Test("Unknown characters return nil")
+    func unknownCharacters() {
+        #expect(HIDKeyMap.lookup("\u{00E9}") == nil)  // e-acute
+        #expect(HIDKeyMap.lookup("\u{1F600}") == nil)  // emoji
+    }
+}
+
+// MARK: - namedKey()
+
+@Suite("HIDKeyMap.namedKey")
+struct HIDKeyMapNamedKeyTests {
+
+    @Test("Return/enter key aliases")
+    func returnKey() {
+        #expect(HIDKeyMap.namedKey("return") == HIDKeyCode.returnKey)
+        #expect(HIDKeyMap.namedKey("enter") == HIDKeyCode.returnKey)
+        #expect(HIDKeyMap.namedKey("Return") == HIDKeyCode.returnKey)
+        #expect(HIDKeyMap.namedKey("ENTER") == HIDKeyCode.returnKey)
     }
 
-    // MARK: - namedKey()
-
-    func testNamedKeyReturn() {
-        XCTAssertEqual(HIDKeyMap.namedKey("return"), HIDKeyCode.returnKey)
-        XCTAssertEqual(HIDKeyMap.namedKey("enter"), HIDKeyCode.returnKey)
-        XCTAssertEqual(HIDKeyMap.namedKey("Return"), HIDKeyCode.returnKey)
-        XCTAssertEqual(HIDKeyMap.namedKey("ENTER"), HIDKeyCode.returnKey)
+    @Test("Escape key aliases")
+    func escapeKey() {
+        #expect(HIDKeyMap.namedKey("escape") == HIDKeyCode.escape)
+        #expect(HIDKeyMap.namedKey("esc") == HIDKeyCode.escape)
+        #expect(HIDKeyMap.namedKey("ESC") == HIDKeyCode.escape)
     }
 
-    func testNamedKeyEscape() {
-        XCTAssertEqual(HIDKeyMap.namedKey("escape"), HIDKeyCode.escape)
-        XCTAssertEqual(HIDKeyMap.namedKey("esc"), HIDKeyCode.escape)
-        XCTAssertEqual(HIDKeyMap.namedKey("ESC"), HIDKeyCode.escape)
+    @Test("Backspace/delete aliases")
+    func backspaceKey() {
+        #expect(HIDKeyMap.namedKey("backspace") == HIDKeyCode.backspace)
+        #expect(HIDKeyMap.namedKey("delete") == HIDKeyCode.backspace)
     }
 
-    func testNamedKeyBackspace() {
-        XCTAssertEqual(HIDKeyMap.namedKey("backspace"), HIDKeyCode.backspace)
-        XCTAssertEqual(HIDKeyMap.namedKey("delete"), HIDKeyCode.backspace)
+    @Test("Tab and space keys")
+    func tabAndSpace() {
+        #expect(HIDKeyMap.namedKey("tab") == HIDKeyCode.tab)
+        #expect(HIDKeyMap.namedKey("space") == HIDKeyCode.space)
     }
 
-    func testNamedKeyTabAndSpace() {
-        XCTAssertEqual(HIDKeyMap.namedKey("tab"), HIDKeyCode.tab)
-        XCTAssertEqual(HIDKeyMap.namedKey("space"), HIDKeyCode.space)
+    @Test("Arrow keys")
+    func arrowKeys() {
+        #expect(HIDKeyMap.namedKey("up") == HIDKeyCode.upArrow)
+        #expect(HIDKeyMap.namedKey("down") == HIDKeyCode.downArrow)
+        #expect(HIDKeyMap.namedKey("left") == HIDKeyCode.leftArrow)
+        #expect(HIDKeyMap.namedKey("right") == HIDKeyCode.rightArrow)
     }
 
-    func testNamedKeyArrows() {
-        XCTAssertEqual(HIDKeyMap.namedKey("up"), HIDKeyCode.upArrow)
-        XCTAssertEqual(HIDKeyMap.namedKey("down"), HIDKeyCode.downArrow)
-        XCTAssertEqual(HIDKeyMap.namedKey("left"), HIDKeyCode.leftArrow)
-        XCTAssertEqual(HIDKeyMap.namedKey("right"), HIDKeyCode.rightArrow)
+    @Test("Navigation keys")
+    func navigationKeys() {
+        #expect(HIDKeyMap.namedKey("home") == HIDKeyCode.home)
+        #expect(HIDKeyMap.namedKey("end") == HIDKeyCode.end)
+        #expect(HIDKeyMap.namedKey("pageup") == HIDKeyCode.pageUp)
+        #expect(HIDKeyMap.namedKey("pagedown") == HIDKeyCode.pageDown)
     }
 
-    func testNamedKeyNavigation() {
-        XCTAssertEqual(HIDKeyMap.namedKey("home"), HIDKeyCode.home)
-        XCTAssertEqual(HIDKeyMap.namedKey("end"), HIDKeyCode.end)
-        XCTAssertEqual(HIDKeyMap.namedKey("pageup"), HIDKeyCode.pageUp)
-        XCTAssertEqual(HIDKeyMap.namedKey("pagedown"), HIDKeyCode.pageDown)
+    @Test("Single character falls back to lookup")
+    func singleCharFallback() {
+        #expect(HIDKeyMap.namedKey("a") == HIDKeyCode.a)
+        #expect(HIDKeyMap.namedKey("5") == HIDKeyCode.key5)
     }
 
-    func testNamedKeySingleCharFallback() {
-        XCTAssertEqual(HIDKeyMap.namedKey("a"), HIDKeyCode.a)
-        XCTAssertEqual(HIDKeyMap.namedKey("5"), HIDKeyCode.key5)
+    @Test("Invalid key names return nil")
+    func invalidNames() {
+        #expect(HIDKeyMap.namedKey("foobar") == nil)
+        #expect(HIDKeyMap.namedKey("") == nil)
+        #expect(HIDKeyMap.namedKey("ctrl") == nil)
+    }
+}
+
+// MARK: - parseModifier()
+
+@Suite("HIDKeyMap.parseModifier")
+struct HIDKeyMapParseModifierTests {
+
+    @Test("Command modifier aliases")
+    func commandModifier() {
+        #expect(HIDKeyMap.parseModifier("cmd") == .leftCommand)
+        #expect(HIDKeyMap.parseModifier("command") == .leftCommand)
+        #expect(HIDKeyMap.parseModifier("CMD") == .leftCommand)
+        #expect(HIDKeyMap.parseModifier("Command") == .leftCommand)
     }
 
-    func testNamedKeyInvalid() {
-        XCTAssertNil(HIDKeyMap.namedKey("foobar"))
-        XCTAssertNil(HIDKeyMap.namedKey(""))
-        XCTAssertNil(HIDKeyMap.namedKey("ctrl"))
+    @Test("Shift modifier")
+    func shiftModifier() {
+        #expect(HIDKeyMap.parseModifier("shift") == .leftShift)
+        #expect(HIDKeyMap.parseModifier("SHIFT") == .leftShift)
     }
 
-    // MARK: - parseModifier()
-
-    func testParseModifierCommand() {
-        XCTAssertEqual(HIDKeyMap.parseModifier("cmd"), .leftCommand)
-        XCTAssertEqual(HIDKeyMap.parseModifier("command"), .leftCommand)
-        XCTAssertEqual(HIDKeyMap.parseModifier("CMD"), .leftCommand)
-        XCTAssertEqual(HIDKeyMap.parseModifier("Command"), .leftCommand)
+    @Test("Option/alt modifier aliases")
+    func optionModifier() {
+        #expect(HIDKeyMap.parseModifier("opt") == .leftOption)
+        #expect(HIDKeyMap.parseModifier("option") == .leftOption)
+        #expect(HIDKeyMap.parseModifier("alt") == .leftOption)
+        #expect(HIDKeyMap.parseModifier("ALT") == .leftOption)
     }
 
-    func testParseModifierShift() {
-        XCTAssertEqual(HIDKeyMap.parseModifier("shift"), .leftShift)
-        XCTAssertEqual(HIDKeyMap.parseModifier("SHIFT"), .leftShift)
+    @Test("Control modifier aliases")
+    func controlModifier() {
+        #expect(HIDKeyMap.parseModifier("ctrl") == .leftControl)
+        #expect(HIDKeyMap.parseModifier("control") == .leftControl)
     }
 
-    func testParseModifierOption() {
-        XCTAssertEqual(HIDKeyMap.parseModifier("opt"), .leftOption)
-        XCTAssertEqual(HIDKeyMap.parseModifier("option"), .leftOption)
-        XCTAssertEqual(HIDKeyMap.parseModifier("alt"), .leftOption)
-        XCTAssertEqual(HIDKeyMap.parseModifier("ALT"), .leftOption)
-    }
-
-    func testParseModifierControl() {
-        XCTAssertEqual(HIDKeyMap.parseModifier("ctrl"), .leftControl)
-        XCTAssertEqual(HIDKeyMap.parseModifier("control"), .leftControl)
-    }
-
-    func testParseModifierInvalid() {
-        XCTAssertNil(HIDKeyMap.parseModifier("meta"))
-        XCTAssertNil(HIDKeyMap.parseModifier("super"))
-        XCTAssertNil(HIDKeyMap.parseModifier(""))
+    @Test("Invalid modifier names return nil")
+    func invalidModifiers() {
+        #expect(HIDKeyMap.parseModifier("meta") == nil)
+        #expect(HIDKeyMap.parseModifier("super") == nil)
+        #expect(HIDKeyMap.parseModifier("") == nil)
     }
 }

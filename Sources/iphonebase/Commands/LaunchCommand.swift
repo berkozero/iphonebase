@@ -16,56 +16,114 @@ struct LaunchCommand: AsyncParsableCommand {
 
     func run() async throws {
         let wm = WindowManager()
-        let window = try wm.findWindow()
-        try wm.bringToFront()
 
         let injector = InputInjector()
+        injector.windowManager = wm
         try injector.connect()
         defer { injector.disconnect() }
 
-        // Step 1: Go home first
-        let centerX = window.bounds.origin.x + window.bounds.width / 2
-        let bottomY = window.bounds.origin.y + window.bounds.height - 20
+        let capture = ScreenCapture(windowManager: wm)
+        let ocr = OCREngine()
+
+        // Step 1: Go home first — ensure focus and get fresh bounds
+        try injector.ensureFocus()
+        var bounds = injector.windowBounds!
+
+        let centerX = bounds.origin.x + bounds.width / 2
+        let bottomY = bounds.origin.y + bounds.height - 20
         try injector.swipe(
             direction: .up,
             fromX: centerX,
             fromY: bottomY,
-            distance: window.bounds.height * 0.4,
+            distance: bounds.height * 0.4,
             steps: 15
         )
-        usleep(500_000)  // Wait for home screen
+        usleep(1_000_000)  // Wait for home screen
 
-        // Step 2: Swipe down from center to open Spotlight
-        let centerY = window.bounds.origin.y + window.bounds.height / 2
-        try injector.swipe(
-            direction: .down,
-            fromX: centerX,
-            fromY: centerY,
-            distance: 150,
-            steps: 10
-        )
-        usleep(800_000)  // Wait for Spotlight to appear
+        // Step 2: Swipe down from center to open Spotlight, verify with OCR
+        try injector.ensureFocus()
+        bounds = injector.windowBounds!
+
+        let centerY = bounds.origin.y + bounds.height / 2
+        let spotlightCenterX = bounds.origin.x + bounds.width / 2
+        var spotlightOpened = false
+        for attempt in 1...3 {
+            try injector.swipe(
+                direction: .down,
+                fromX: spotlightCenterX,
+                fromY: centerY,
+                distance: 200,
+                steps: 15
+            )
+
+            // Wait for Spotlight search field to appear
+            if let _ = await ocr.waitForText(
+                matching: "Search",
+                capture: capture,
+                timeout: 2,
+                interval: 0.3
+            ) {
+                spotlightOpened = true
+                break
+            }
+
+            if !json {
+                FileHandle.standardError.write(Data("Spotlight not detected, retrying... (attempt \(attempt)/3)\n".utf8))
+            }
+        }
+
+        guard spotlightOpened else {
+            if json {
+                let result = ActionResult<EmptyData>(
+                    success: false,
+                    action: "launch",
+                    error: "Failed to open Spotlight after 3 attempts"
+                )
+                result.printJSON()
+            } else {
+                print("Failed to open Spotlight after 3 attempts")
+            }
+            throw ExitCode.failure
+        }
 
         // Step 3: Type the app name
         try injector.typeText(appName)
-        usleep(1_000_000)  // Wait for search results
 
-        // Step 4: Tap the first result (top of search results area)
-        // Spotlight results appear below the search bar, roughly 40% from top
-        let resultY = window.bounds.origin.y + window.bounds.height * 0.35
-        try injector.tap(x: centerX, y: resultY)
+        // Step 4: Wait for search results to appear, then tap the app
+        try injector.ensureFocus()
+        bounds = injector.windowBounds!
+
+        if let match = await ocr.waitForText(
+            matching: appName,
+            capture: capture,
+            timeout: 3,
+            interval: 0.3
+        ) {
+            // Convert image coordinates to screen coordinates
+            let image = try await capture.captureWindow()
+            let scaleX = bounds.width / Double(image.width)
+            let scaleY = bounds.height / Double(image.height)
+
+            let tapX = bounds.origin.x + Double(match.centerX) * scaleX
+            let tapY = bounds.origin.y + Double(match.centerY) * scaleY
+            try injector.tap(x: tapX, y: tapY)
+        } else {
+            // Fallback: tap at approximate first-result position
+            let resultY = bounds.origin.y + bounds.height * 0.35
+            let fallbackCenterX = bounds.origin.x + bounds.width / 2
+            try injector.tap(x: fallbackCenterX, y: resultY)
+        }
 
         if json {
-            let result: [String: Any] = [
-                "action": "launch",
-                "app": appName,
-            ]
-            if let data = try? JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted]),
-               let str = String(data: data, encoding: .utf8) {
-                print(str)
-            }
+            let data = LaunchData(app: appName)
+            let result = ActionResult.ok(action: "launch", data: data)
+            result.printJSON()
         } else {
             print("Launched \"\(appName)\"")
         }
     }
+}
+
+private struct LaunchData: Encodable {
+    let app: String
 }

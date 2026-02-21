@@ -72,6 +72,7 @@ public enum InputInjectorError: Error, CustomStringConvertible {
     case noServerSocket
     case connectionFailed(String)
     case notConnected
+    case outOfBounds(x: Double, y: Double, bounds: CGRect)
 
     public var description: String {
         switch self {
@@ -83,7 +84,17 @@ public enum InputInjectorError: Error, CustomStringConvertible {
             return "Failed to connect to Karabiner daemon: \(reason)"
         case .notConnected:
             return "Not connected to Karabiner daemon. Call connect() first."
+        case .outOfBounds(let x, let y, let bounds):
+            return "Coordinates (\(Int(x)), \(Int(y))) are outside the mirroring window bounds (\(Int(bounds.origin.x)),\(Int(bounds.origin.y)))-(\(Int(bounds.maxX)),\(Int(bounds.maxY)))"
         }
+    }
+}
+
+/// Validate that a point falls within bounds. Throws outOfBounds if not.
+func validatePointInBounds(x: Double, y: Double, bounds: CGRect?) throws {
+    guard let bounds = bounds else { return }
+    if !bounds.contains(CGPoint(x: x, y: y)) {
+        throw InputInjectorError.outOfBounds(x: x, y: y, bounds: bounds)
     }
 }
 
@@ -94,6 +105,20 @@ public final class InputInjector {
     private var connected = false
     private var heartbeatSource: DispatchSourceTimer?
     public var verbose = false
+
+    /// When set, InputInjector will re-acquire window bounds and focus before every
+    /// input operation. This handles window moves and focus loss automatically.
+    public var windowManager: WindowManager?
+
+    /// Current mirroring window bounds (absolute screen coordinates, screen points).
+    /// Refreshed automatically before each input operation when windowManager is set.
+    /// Can also be set manually to enable coordinate validation without auto-focus.
+    public var windowBounds: CGRect?
+
+    /// Timestamp of last ensureFocus() call — used to avoid redundant CGEvent clicks
+    /// that can disrupt the input session iPhone Mirroring just established.
+    private var lastFocusTime: CFAbsoluteTime = 0
+    private static let focusCooldown: CFAbsoluteTime = 5.0
 
     private static let serverDir = "/Library/Application Support/org.pqrs/tmp/rootonly/vhidd_server"
     private static let clientDir = "/Library/Application Support/org.pqrs/tmp/rootonly/vhidd_client"
@@ -164,20 +189,30 @@ public final class InputInjector {
             throw InputInjectorError.connectionFailed("Bind failed (errno \(errno)). Try running with sudo.")
         }
 
-        // Connect to server
+        // Connect to server with retry (daemon socket can be briefly unavailable)
         var serverAddr = sockaddr_un()
         serverAddr.sun_family = sa_family_t(AF_UNIX)
         setSocketPath(&serverAddr, serverPath)
 
-        let connectResult = withUnsafePointer(to: &serverAddr) { ptr in
-            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
-                Foundation.connect(sockfd, sa, socklen_t(MemoryLayout<sockaddr_un>.size))
+        let maxAttempts = 3
+        var lastErrno: Int32 = 0
+        for attempt in 1...maxAttempts {
+            let connectResult = withUnsafePointer(to: &serverAddr) { ptr in
+                ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+                    Foundation.connect(sockfd, sa, socklen_t(MemoryLayout<sockaddr_un>.size))
+                }
             }
-        }
-        guard connectResult == 0 else {
-            close(sockfd)
-            unlink(clientSocketPath)
-            throw InputInjectorError.connectionFailed("Connect failed (errno \(errno)). Try running with sudo.")
+            if connectResult == 0 { break }
+
+            lastErrno = errno
+            if attempt < maxAttempts {
+                if verbose { FileHandle.standardError.write(Data("[iphonebase] Connect attempt \(attempt)/\(maxAttempts) failed, retrying...\n".utf8)) }
+                usleep(500_000)  // 500ms backoff
+            } else {
+                close(sockfd)
+                unlink(clientSocketPath)
+                throw InputInjectorError.connectionFailed("Connect failed after \(maxAttempts) attempts (errno \(lastErrno)). Try running with sudo.")
+            }
         }
 
         connected = true
@@ -213,49 +248,99 @@ public final class InputInjector {
 
     // MARK: - High-level Input Operations
 
+    /// Validate that a point falls within the window bounds (if set)
+    private func validatePoint(x: Double, y: Double) throws {
+        try validatePointInBounds(x: x, y: y, bounds: windowBounds)
+    }
+
+    /// Re-acquire window bounds and focus before an input operation.
+    /// Called automatically at the start of every HID input method.
+    /// If windowManager is nil, this is a no-op (backward compatible).
+    ///
+    /// Uses a cooldown to avoid sending redundant CGEvent focus clicks that can
+    /// disrupt the input session iPhone Mirroring just established. Window bounds
+    /// are always refreshed (cheap), but bringToFront() is skipped if called
+    /// within the cooldown period.
+    public func ensureFocus() throws {
+        guard let wm = windowManager else { return }
+        let focusStart = CFAbsoluteTimeGetCurrent()
+        let window = try wm.findWindow()
+        windowBounds = window.bounds
+
+        let now = CFAbsoluteTimeGetCurrent()
+        let elapsed = now - lastFocusTime
+        if elapsed > Self.focusCooldown {
+            if verbose { FileHandle.standardError.write(Data("[iphonebase] ensureFocus: calling bringToFront (elapsed=\(String(format: "%.1f", elapsed))s)\n".utf8)) }
+            try wm.bringToFront()
+            lastFocusTime = CFAbsoluteTimeGetCurrent()
+            if verbose {
+                let focusDuration = CFAbsoluteTimeGetCurrent() - focusStart
+                FileHandle.standardError.write(Data("[iphonebase] ensureFocus: bringToFront took \(String(format: "%.2f", focusDuration))s\n".utf8))
+            }
+        } else {
+            if verbose { FileHandle.standardError.write(Data("[iphonebase] ensureFocus: cooldown active (elapsed=\(String(format: "%.1f", elapsed))s), bounds refreshed\n".utf8)) }
+        }
+    }
+
     /// Tap at absolute screen coordinates
     public func tap(x: Double, y: Double) throws {
         guard connected else { throw InputInjectorError.notConnected }
+        let tapStart = CFAbsoluteTimeGetCurrent()
+        try ensureFocus()
+        let afterFocus = CFAbsoluteTimeGetCurrent()
+        try validatePoint(x: x, y: y)
 
         let point = CGPoint(x: x, y: y)
-        if verbose { FileHandle.standardError.write(Data("[iphonebase] Tap at (\(x), \(y))\n".utf8)) }
+        if verbose {
+            FileHandle.standardError.write(Data("[iphonebase] Tap at (\(x), \(y)) — \(String(format: "%.0f", (afterFocus - tapStart) * 1000))ms after focus\n".utf8))
+        }
 
         // Send heartbeat before action
         sendHeartbeat()
         usleep(50_000)
 
-        // Strategy: CGWarp cursor to target, then use Karabiner virtual HID for the click.
-        // iPhone Mirroring blocks CGEvent clicks but accepts virtual HID clicks.
+        if verbose { FileHandle.standardError.write(Data("[iphonebase] CGAssociate(false)\n".utf8)) }
+        CGAssociateMouseAndMouseCursorPosition(boolean_t(0))
 
-        // 1. Move cursor to target position
+        if verbose { FileHandle.standardError.write(Data("[iphonebase] CGWarp to (\(x), \(y))\n".utf8)) }
         CGWarpMouseCursorPosition(point)
-        usleep(30_000)
+        usleep(15_000)
 
-        // 2. Send a small virtual HID mouse move to "wake" the virtual pointer at the warped position
-        //    This syncs the virtual HID pointer with the warped system cursor.
-        for _ in 0..<3 {
-            var nudge = PointingReport()
-            nudge.x = 1
-            sendRequest(.postPointingReport, payload: nudge.toBytes())
-            usleep(8_000)
-            var back = PointingReport()
-            back.x = -1
-            sendRequest(.postPointingReport, payload: back.toBytes())
-            usleep(8_000)
+        // Nudge-sync: align virtual HID pointer with warped cursor
+        if verbose { FileHandle.standardError.write(Data("[iphonebase] Nudge-sync\n".utf8)) }
+        var nudge1 = PointingReport()
+        nudge1.x = 1
+        sendRequest(.postPointingReport, payload: nudge1.toBytes())
+        usleep(10_000)
+        var nudge2 = PointingReport()
+        nudge2.x = -1
+        sendRequest(.postPointingReport, payload: nudge2.toBytes())
+        usleep(10_000)
+
+        // Click via virtual HID
+        let clickTime = CFAbsoluteTimeGetCurrent()
+        if verbose {
+            let sinceFocus = (clickTime - afterFocus) * 1000
+            let sinceStart = (clickTime - tapStart) * 1000
+            FileHandle.standardError.write(Data("[iphonebase] HID mouseDown — \(String(format: "%.0f", sinceFocus))ms after focus, \(String(format: "%.0f", sinceStart))ms total\n".utf8))
         }
-        usleep(30_000)
-
-        // 3. Click via virtual HID
         var down = PointingReport()
         down.buttons = 0x01
         sendRequest(.postPointingReport, payload: down.toBytes())
-        usleep(120_000)  // 120ms hold
+        usleep(80_000)
 
+        if verbose { FileHandle.standardError.write(Data("[iphonebase] HID mouseUp\n".utf8)) }
         let up = PointingReport()
         sendRequest(.postPointingReport, payload: up.toBytes())
         usleep(50_000)
 
-        if verbose { FileHandle.standardError.write(Data("[iphonebase] Tap complete (virtual HID)\n".utf8)) }
+        if verbose { FileHandle.standardError.write(Data("[iphonebase] CGAssociate(true)\n".utf8)) }
+        CGAssociateMouseAndMouseCursorPosition(boolean_t(1))
+
+        if verbose {
+            let totalMs = (CFAbsoluteTimeGetCurrent() - tapStart) * 1000
+            FileHandle.standardError.write(Data("[iphonebase] Tap complete — \(String(format: "%.0f", totalMs))ms total\n".utf8))
+        }
     }
 
     /// Double-tap at absolute screen coordinates
@@ -268,6 +353,8 @@ public final class InputInjector {
     /// Long press at absolute screen coordinates
     public func longPress(x: Double, y: Double, durationMs: UInt32 = 1000) throws {
         guard connected else { throw InputInjectorError.notConnected }
+        try ensureFocus()
+        try validatePoint(x: x, y: y)
 
         CGAssociateMouseAndMouseCursorPosition(boolean_t(0))
         CGWarpMouseCursorPosition(CGPoint(x: x, y: y))
@@ -299,6 +386,8 @@ public final class InputInjector {
     /// Swipe in a direction from a starting point
     public func swipe(direction: SwipeDirection, fromX: Double, fromY: Double, distance: Double = 300, steps: Int = 20) throws {
         guard connected else { throw InputInjectorError.notConnected }
+        try ensureFocus()
+        try validatePoint(x: fromX, y: fromY)
 
         if verbose { FileHandle.standardError.write(Data("[iphonebase] Swipe \(direction) from (\(fromX), \(fromY)) dist \(distance)\n".utf8)) }
 
@@ -314,28 +403,27 @@ public final class InputInjector {
             }
         }()
 
+        CGAssociateMouseAndMouseCursorPosition(boolean_t(0))
+
         // Warp cursor to start position
         CGWarpMouseCursorPosition(CGPoint(x: fromX, y: fromY))
-        usleep(30_000)
+        usleep(15_000)
 
-        // Nudge-sync (multiple times for reliability)
-        for _ in 0..<3 {
-            var nudge = PointingReport()
-            nudge.x = 1
-            sendRequest(.postPointingReport, payload: nudge.toBytes())
-            usleep(8_000)
-            var back = PointingReport()
-            back.x = -1
-            sendRequest(.postPointingReport, payload: back.toBytes())
-            usleep(8_000)
-        }
-        usleep(30_000)
+        // Nudge-sync
+        var nudge1 = PointingReport()
+        nudge1.x = 1
+        sendRequest(.postPointingReport, payload: nudge1.toBytes())
+        usleep(10_000)
+        var nudge2 = PointingReport()
+        nudge2.x = -1
+        sendRequest(.postPointingReport, payload: nudge2.toBytes())
+        usleep(10_000)
 
         // Mouse down
         var down = PointingReport()
         down.buttons = 0x01
         sendRequest(.postPointingReport, payload: down.toBytes())
-        usleep(80_000)
+        usleep(50_000)
 
         // Drag in steps using relative moves
         let stepDx = dx / Double(steps)
@@ -347,7 +435,7 @@ public final class InputInjector {
             move.x = Int8(clamping: Int(stepDx))
             move.y = Int8(clamping: Int(stepDy))
             sendRequest(.postPointingReport, payload: move.toBytes())
-            usleep(15_000)
+            usleep(10_000)
         }
 
         // Mouse up
@@ -355,12 +443,78 @@ public final class InputInjector {
         sendRequest(.postPointingReport, payload: up.toBytes())
         usleep(50_000)
 
+        CGAssociateMouseAndMouseCursorPosition(boolean_t(1))
+
         if verbose { FileHandle.standardError.write(Data("[iphonebase] Swipe complete\n".utf8)) }
+    }
+
+    /// Drag from one point to another (arbitrary point-to-point)
+    public func drag(fromX: Double, fromY: Double, toX: Double, toY: Double, steps: Int = 20) throws {
+        guard connected else { throw InputInjectorError.notConnected }
+        try ensureFocus()
+        try validatePoint(x: fromX, y: fromY)
+
+        let dx = toX - fromX
+        let dy = toY - fromY
+
+        if verbose { FileHandle.standardError.write(Data("[iphonebase] Drag from (\(fromX), \(fromY)) to (\(toX), \(toY))\n".utf8)) }
+
+        sendHeartbeat()
+        usleep(50_000)
+
+        // Auto-increase steps if distance exceeds Int8 range per step
+        let maxPerStep = 127.0
+        let requiredSteps = max(steps, Int(ceil(max(abs(dx), abs(dy)) / maxPerStep)))
+
+        CGAssociateMouseAndMouseCursorPosition(boolean_t(0))
+
+        // Warp cursor to start position
+        CGWarpMouseCursorPosition(CGPoint(x: fromX, y: fromY))
+        usleep(15_000)
+
+        // Nudge-sync
+        var nudge1 = PointingReport()
+        nudge1.x = 1
+        sendRequest(.postPointingReport, payload: nudge1.toBytes())
+        usleep(10_000)
+        var nudge2 = PointingReport()
+        nudge2.x = -1
+        sendRequest(.postPointingReport, payload: nudge2.toBytes())
+        usleep(10_000)
+
+        // Mouse down
+        var down = PointingReport()
+        down.buttons = 0x01
+        sendRequest(.postPointingReport, payload: down.toBytes())
+        usleep(50_000)
+
+        // Drag in steps using relative moves
+        let stepDx = dx / Double(requiredSteps)
+        let stepDy = dy / Double(requiredSteps)
+
+        for _ in 0..<requiredSteps {
+            var move = PointingReport()
+            move.buttons = 0x01
+            move.x = Int8(clamping: Int(stepDx))
+            move.y = Int8(clamping: Int(stepDy))
+            sendRequest(.postPointingReport, payload: move.toBytes())
+            usleep(10_000)
+        }
+
+        // Mouse up
+        let up = PointingReport()
+        sendRequest(.postPointingReport, payload: up.toBytes())
+        usleep(50_000)
+
+        CGAssociateMouseAndMouseCursorPosition(boolean_t(1))
+
+        if verbose { FileHandle.standardError.write(Data("[iphonebase] Drag complete\n".utf8)) }
     }
 
     /// Type a string character by character
     public func typeText(_ text: String) throws {
         guard connected else { throw InputInjectorError.notConnected }
+        try ensureFocus()
 
         for char in text {
             guard let mapping = HIDKeyMap.lookup(char) else {
@@ -375,12 +529,14 @@ public final class InputInjector {
     /// Press a named key with optional modifiers
     public func pressKey(keycode: UInt16, modifiers: HIDModifier = []) throws {
         guard connected else { throw InputInjectorError.notConnected }
+        try ensureFocus()
         sendKeystroke(keycode: keycode, modifiers: modifiers)
     }
 
     /// Scroll vertically
     public func scroll(direction: ScrollDirection, clicks: Int = 3) throws {
         guard connected else { throw InputInjectorError.notConnected }
+        try ensureFocus()
 
         let wheelValue: Int8 = {
             switch direction {
@@ -464,8 +620,11 @@ public final class InputInjector {
     }
 
     private func rawSend(_ data: [UInt8]) {
-        data.withUnsafeBufferPointer { buf in
-            _ = send(sockfd, buf.baseAddress, buf.count, 0)
+        let sent = data.withUnsafeBufferPointer { buf in
+            send(sockfd, buf.baseAddress, buf.count, 0)
+        }
+        if verbose && sent != data.count {
+            FileHandle.standardError.write(Data("[iphonebase] rawSend FAILED: sent=\(sent), expected=\(data.count), errno=\(errno)\n".utf8))
         }
     }
 

@@ -13,27 +13,31 @@ struct HomeCommand: AsyncParsableCommand {
 
     func run() async throws {
         let wm = WindowManager()
-        let window = try wm.findWindow()
-        try wm.bringToFront()
 
         let injector = InputInjector()
+        injector.windowManager = wm
         try injector.connect()
         defer { injector.disconnect() }
 
+        // Ensure focus and get fresh bounds before coordinate math
+        try injector.ensureFocus()
+        let bounds = injector.windowBounds!
+
         // Swipe up from bottom of the mirroring window (simulates home gesture on Face ID iPhones)
-        let centerX = window.bounds.origin.x + window.bounds.width / 2
-        let bottomY = window.bounds.origin.y + window.bounds.height - 20
+        let centerX = bounds.origin.x + bounds.width / 2
+        let bottomY = bounds.origin.y + bounds.height - 20
 
         try injector.swipe(
             direction: .up,
             fromX: centerX,
             fromY: bottomY,
-            distance: window.bounds.height * 0.4,
+            distance: bounds.height * 0.4,
             steps: 15
         )
 
         if json {
-            print(#"{"action": "home"}"#)
+            let result = ActionResult.ok(action: "home", data: EmptyData())
+            result.printJSON()
         } else {
             print("Home gesture sent")
         }

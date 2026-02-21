@@ -1,5 +1,6 @@
 import Vision
 import CoreGraphics
+import Foundation
 
 public struct OCRElement: Codable {
     public let text: String
@@ -10,6 +11,18 @@ public struct OCRElement: Codable {
     public let centerX: Int
     public let centerY: Int
     public let confidence: Float
+
+    public init(text: String, x: Int, y: Int, width: Int, height: Int,
+                centerX: Int, centerY: Int, confidence: Float) {
+        self.text = text
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+        self.centerX = centerX
+        self.centerY = centerY
+        self.confidence = confidence
+    }
 }
 
 public enum OCRError: Error, CustomStringConvertible {
@@ -113,5 +126,37 @@ public struct OCREngine {
         }
 
         return fuzzy
+    }
+
+    /// Poll screenshot + OCR until text appears or timeout expires.
+    /// Returns the matched element on success, nil on timeout.
+    public func waitForText(
+        matching query: String,
+        capture: ScreenCapture,
+        timeout: TimeInterval = 10,
+        interval: TimeInterval = 0.5,
+        verbose: Bool = false
+    ) async -> OCRElement? {
+        let deadline = Date().addingTimeInterval(timeout)
+        var attempt = 0
+
+        while Date() < deadline {
+            attempt += 1
+            if verbose {
+                FileHandle.standardError.write(Data("[iphonebase] Waiting for \"\(query)\"... attempt \(attempt)\n".utf8))
+            }
+
+            if let image = try? await capture.captureWindow(),
+               let match = try? findElements(matching: query, in: image).first {
+                return match
+            }
+
+            // Sleep for the poll interval, but don't overshoot the deadline
+            let remaining = deadline.timeIntervalSinceNow
+            if remaining <= 0 { break }
+            try? await Task.sleep(nanoseconds: UInt64(min(interval, remaining) * 1_000_000_000))
+        }
+
+        return nil
     }
 }
