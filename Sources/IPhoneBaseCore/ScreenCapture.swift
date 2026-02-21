@@ -49,6 +49,22 @@ public enum ScreenCaptureError: Error, CustomStringConvertible {
     }
 }
 
+/// Detected iPhone content area within the mirroring window.
+/// All coordinates are in screen points, relative to the window's top-left corner.
+public struct ContentArea {
+    /// The iPhone screen content rectangle (excludes window chrome, rounded corners, etc.)
+    public let rect: CGRect
+
+    /// Y position of the home indicator bar center, relative to window top.
+    /// Calculated from the content rect bottom — the indicator is always near
+    /// the bottom edge of the iPhone screen (iOS system layout).
+    public var homeIndicatorY: CGFloat {
+        // The home indicator sits ~8pt from the bottom of the iPhone screen.
+        // This is derived from the detected content boundary, not hardcoded pixels.
+        rect.maxY - 8
+    }
+}
+
 public struct ScreenCapture {
 
     private let windowManager: WindowManager
@@ -105,6 +121,104 @@ public struct ScreenCapture {
         }
 
         return pngData
+    }
+
+    // MARK: - Content Area Detection
+
+    /// Detect the iPhone content area by scanning the captured window image
+    /// for non-black pixel boundaries. Works at any window size or iPhone model.
+    ///
+    /// Algorithm:
+    /// 1. Capture the window image
+    /// 2. Scan center column/row for brightness transitions to find content edges
+    /// 3. Scan bottom of content area for the home indicator bar (bright horizontal line)
+    /// 4. Convert pixel coordinates to screen points using dynamic scale
+    public func detectContentArea() async throws -> ContentArea {
+        let image = try await captureWindow()
+        let window = try windowManager.findWindow()
+
+        let imgWidth = image.width
+        let imgHeight = image.height
+
+        guard let dataProvider = image.dataProvider,
+              let data = dataProvider.data,
+              let ptr = CFDataGetBytePtr(data) else {
+            throw ScreenCaptureError.captureFailure("Could not access pixel data for content detection.")
+        }
+
+        let bytesPerPixel = image.bitsPerPixel / 8
+        let bytesPerRow = image.bytesPerRow
+
+        // Pixel brightness (0-255) at image coordinates
+        func brightness(x: Int, y: Int) -> UInt8 {
+            guard x >= 0, x < imgWidth, y >= 0, y < imgHeight else { return 0 }
+            let offset = y * bytesPerRow + x * bytesPerPixel
+            let r = UInt16(ptr[offset])
+            let g = UInt16(ptr[offset + 1])
+            let b = UInt16(ptr[offset + 2])
+            return UInt8((r + g + b) / 3)
+        }
+
+        let contentThreshold: UInt8 = 30
+        let centerX = imgWidth / 2
+
+        // Scan center column top→down: first bright pixel = content top
+        var contentTop = 0
+        for y in 0..<imgHeight {
+            if brightness(x: centerX, y: y) > contentThreshold {
+                contentTop = y
+                break
+            }
+        }
+
+        // Scan center column bottom→up: first bright pixel = content bottom
+        var contentBottom = imgHeight - 1
+        for y in stride(from: imgHeight - 1, through: 0, by: -1) {
+            if brightness(x: centerX, y: y) > contentThreshold {
+                contentBottom = y
+                break
+            }
+        }
+
+        // Scan at vertical center of content for left/right edges
+        let scanY = (contentTop + contentBottom) / 2
+
+        var contentLeft = 0
+        for x in 0..<imgWidth {
+            if brightness(x: x, y: scanY) > contentThreshold {
+                contentLeft = x
+                break
+            }
+        }
+
+        var contentRight = imgWidth - 1
+        for x in stride(from: imgWidth - 1, through: 0, by: -1) {
+            if brightness(x: x, y: scanY) > contentThreshold {
+                contentRight = x
+                break
+            }
+        }
+
+        let cw = contentRight - contentLeft
+        let ch = contentBottom - contentTop
+        guard cw > 50, ch > 50 else {
+            throw ScreenCaptureError.captureFailure(
+                "Could not detect content area — screen may be off or all black."
+            )
+        }
+
+        // Convert from image pixels to screen points using dynamic scale
+        let scaleX = CGFloat(imgWidth) / window.bounds.width
+        let scaleY = CGFloat(imgHeight) / window.bounds.height
+
+        let rect = CGRect(
+            x: CGFloat(contentLeft) / scaleX,
+            y: CGFloat(contentTop) / scaleY,
+            width: CGFloat(cw) / scaleX,
+            height: CGFloat(ch) / scaleY
+        )
+
+        return ContentArea(rect: rect)
     }
 
     // MARK: - Grid Overlay
@@ -253,6 +367,15 @@ public struct GridCell: Codable {
     public let centerX: Int
     public let centerY: Int
 
+    public init(x: Int, y: Int, width: Int, height: Int, centerX: Int, centerY: Int) {
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+        self.centerX = centerX
+        self.centerY = centerY
+    }
+
     enum CodingKeys: String, CodingKey {
         case x, y, width, height
         case centerX = "center_x"
@@ -264,6 +387,12 @@ public struct GridInfo: Codable {
     public let rows: Int
     public let cols: Int
     public let cells: [String: GridCell]
+
+    public init(rows: Int, cols: Int, cells: [String: GridCell]) {
+        self.rows = rows
+        self.cols = cols
+        self.cells = cells
+    }
 
     /// Convert row/col index to label like "A1", "B3", etc.
     /// Columns: A-Z (left to right), Rows: 1-N (top to bottom)

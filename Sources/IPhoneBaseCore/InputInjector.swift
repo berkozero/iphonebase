@@ -4,10 +4,11 @@ import CoreGraphics
 // MARK: - Binary Report Structs
 
 /// Karabiner virtual HID pointing report (8 bytes)
+/// Sent via postPointingReport to the Karabiner DriverKit virtual HID device.
 struct PointingReport {
-    var buttons: UInt32 = 0
-    var x: Int8 = 0
-    var y: Int8 = 0
+    var buttons: UInt32 = 0   // bit 0 = left button
+    var x: Int8 = 0           // relative X movement
+    var y: Int8 = 0           // relative Y movement
     var verticalWheel: Int8 = 0
     var horizontalWheel: Int8 = 0
 
@@ -114,6 +115,7 @@ public final class InputInjector {
     /// Refreshed automatically before each input operation when windowManager is set.
     /// Can also be set manually to enable coordinate validation without auto-focus.
     public var windowBounds: CGRect?
+
 
     /// Timestamp of last ensureFocus() call — used to avoid redundant CGEvent clicks
     /// that can disrupt the input session iPhone Mirroring just established.
@@ -282,7 +284,8 @@ public final class InputInjector {
         }
     }
 
-    /// Tap at absolute screen coordinates
+    /// Tap at absolute screen coordinates using Karabiner HID pointing.
+    /// Uses the same HID mechanism as swipe/drag for reliable iPhone Mirroring input.
     public func tap(x: Double, y: Double) throws {
         guard connected else { throw InputInjectorError.notConnected }
         let tapStart = CFAbsoluteTimeGetCurrent()
@@ -292,54 +295,67 @@ public final class InputInjector {
 
         let point = CGPoint(x: x, y: y)
         if verbose {
-            FileHandle.standardError.write(Data("[iphonebase] Tap at (\(x), \(y)) — \(String(format: "%.0f", (afterFocus - tapStart) * 1000))ms after focus\n".utf8))
+            FileHandle.standardError.write(Data("[tap] target=(\(Int(x)), \(Int(y))) focusMs=\(String(format: "%.0f", (afterFocus - tapStart) * 1000))\n".utf8))
+            FileHandle.standardError.write(Data("[tap] windowBounds=\(windowBounds.map { "(\(Int($0.origin.x)),\(Int($0.origin.y)),\(Int($0.width)),\(Int($0.height)))" } ?? "nil")\n".utf8))
+            FileHandle.standardError.write(Data("[tap] sockfd=\(sockfd) connected=\(connected)\n".utf8))
         }
 
-        // Send heartbeat before action
-        sendHeartbeat()
-        usleep(50_000)
+        withMouseIsolated {
+            // Step 1: Warp cursor
+            CGWarpMouseCursorPosition(point)
+            usleep(10_000)
+            if verbose {
+                let cursorPos = CGEvent(source: nil)?.location ?? .zero
+                FileHandle.standardError.write(Data("[tap] after warp: cursorAt=(\(Int(cursorPos.x)),\(Int(cursorPos.y))) target=(\(Int(x)),\(Int(y)))\n".utf8))
+            }
 
-        if verbose { FileHandle.standardError.write(Data("[iphonebase] CGAssociate(false)\n".utf8)) }
-        CGAssociateMouseAndMouseCursorPosition(boolean_t(0))
+            // Step 2: Nudge sync
+            if verbose { FileHandle.standardError.write(Data("[tap] nudgeSync start\n".utf8)) }
+            nudgeSync()
+            if verbose {
+                let cursorPos = CGEvent(source: nil)?.location ?? .zero
+                FileHandle.standardError.write(Data("[tap] after nudgeSync: cursorAt=(\(Int(cursorPos.x)),\(Int(cursorPos.y)))\n".utf8))
+            }
 
-        if verbose { FileHandle.standardError.write(Data("[iphonebase] CGWarp to (\(x), \(y))\n".utf8)) }
-        CGWarpMouseCursorPosition(point)
-        usleep(15_000)
+            // Step 3: Button down
+            if verbose { FileHandle.standardError.write(Data("[tap] sending HID buttonDown (buttons=0x01)\n".utf8)) }
+            var down = PointingReport()
+            down.buttons = 0x01
+            sendPointingReport(down)
+            usleep(30_000)
 
-        // Nudge-sync: align virtual HID pointer with warped cursor
-        if verbose { FileHandle.standardError.write(Data("[iphonebase] Nudge-sync\n".utf8)) }
-        var nudge1 = PointingReport()
-        nudge1.x = 1
-        sendRequest(.postPointingReport, payload: nudge1.toBytes())
-        usleep(10_000)
-        var nudge2 = PointingReport()
-        nudge2.x = -1
-        sendRequest(.postPointingReport, payload: nudge2.toBytes())
-        usleep(10_000)
+            // Step 3b: Micro-movement with button held (1px right, 1px back)
+            // iPhone Mirroring may ignore stationary HID clicks — needs movement to register as touch
+            if verbose { FileHandle.standardError.write(Data("[tap] micro-move +1px (with button held)\n".utf8)) }
+            var moveRight = PointingReport()
+            moveRight.buttons = 0x01
+            moveRight.x = 1
+            sendPointingReport(moveRight)
+            usleep(15_000)
 
-        // Click via virtual HID
-        let clickTime = CFAbsoluteTimeGetCurrent()
-        if verbose {
-            let sinceFocus = (clickTime - afterFocus) * 1000
-            let sinceStart = (clickTime - tapStart) * 1000
-            FileHandle.standardError.write(Data("[iphonebase] HID mouseDown — \(String(format: "%.0f", sinceFocus))ms after focus, \(String(format: "%.0f", sinceStart))ms total\n".utf8))
+            var moveBack = PointingReport()
+            moveBack.buttons = 0x01
+            moveBack.x = -1
+            sendPointingReport(moveBack)
+            usleep(30_000)
+
+            if verbose {
+                let cursorPos = CGEvent(source: nil)?.location ?? .zero
+                FileHandle.standardError.write(Data("[tap] after micro-move: cursorAt=(\(Int(cursorPos.x)),\(Int(cursorPos.y)))\n".utf8))
+            }
+
+            // Step 4: Button up
+            if verbose { FileHandle.standardError.write(Data("[tap] sending HID buttonUp (buttons=0x00)\n".utf8)) }
+            var up = PointingReport()
+            up.buttons = 0x00
+            sendPointingReport(up)
+            usleep(50_000)
         }
-        var down = PointingReport()
-        down.buttons = 0x01
-        sendRequest(.postPointingReport, payload: down.toBytes())
-        usleep(80_000)
-
-        if verbose { FileHandle.standardError.write(Data("[iphonebase] HID mouseUp\n".utf8)) }
-        let up = PointingReport()
-        sendRequest(.postPointingReport, payload: up.toBytes())
-        usleep(50_000)
-
-        if verbose { FileHandle.standardError.write(Data("[iphonebase] CGAssociate(true)\n".utf8)) }
-        CGAssociateMouseAndMouseCursorPosition(boolean_t(1))
 
         if verbose {
+            let cursorPos = CGEvent(source: nil)?.location ?? .zero
             let totalMs = (CFAbsoluteTimeGetCurrent() - tapStart) * 1000
-            FileHandle.standardError.write(Data("[iphonebase] Tap complete — \(String(format: "%.0f", totalMs))ms total\n".utf8))
+            FileHandle.standardError.write(Data("[tap] complete: finalCursor=(\(Int(cursorPos.x)),\(Int(cursorPos.y))) totalMs=\(String(format: "%.0f", totalMs))\n".utf8))
         }
     }
 
@@ -350,163 +366,149 @@ public final class InputInjector {
         try tap(x: x, y: y)
     }
 
-    /// Long press at absolute screen coordinates
+    /// Long press at absolute screen coordinates using Karabiner HID pointing.
     public func longPress(x: Double, y: Double, durationMs: UInt32 = 1000) throws {
         guard connected else { throw InputInjectorError.notConnected }
         try ensureFocus()
         try validatePoint(x: x, y: y)
 
-        CGAssociateMouseAndMouseCursorPosition(boolean_t(0))
-        CGWarpMouseCursorPosition(CGPoint(x: x, y: y))
-        usleep(15_000)
+        let point = CGPoint(x: x, y: y)
 
-        // Nudge-sync
-        var nudge1 = PointingReport()
-        nudge1.x = 1
-        sendRequest(.postPointingReport, payload: nudge1.toBytes())
-        usleep(10_000)
-        var nudge2 = PointingReport()
-        nudge2.x = -1
-        sendRequest(.postPointingReport, payload: nudge2.toBytes())
-        usleep(10_000)
+        withMouseIsolated {
+            CGWarpMouseCursorPosition(point)
+            usleep(10_000)
+            nudgeSync()
 
-        // Press and hold
-        var down = PointingReport()
-        down.buttons = 0x01
-        sendRequest(.postPointingReport, payload: down.toBytes())
-        usleep(durationMs * 1000)
+            // Press and hold via HID
+            var down = PointingReport()
+            down.buttons = 0x01
+            sendPointingReport(down)
+            usleep(durationMs * 1000)
 
-        let up = PointingReport()
-        sendRequest(.postPointingReport, payload: up.toBytes())
-        usleep(50_000)
-
-        CGAssociateMouseAndMouseCursorPosition(boolean_t(1))
+            var up = PointingReport()
+            up.buttons = 0x00
+            sendPointingReport(up)
+            usleep(50_000)
+        }
     }
 
-    /// Swipe in a direction from a starting point
+    /// Swipe in a direction using Karabiner HID pointing click-drag.
+    /// iPhone Mirroring maps virtual mouse click-drag to iOS finger swipe.
+    /// Critical: NO initial hold — an initial hold triggers iOS drag/selection mode.
     public func swipe(direction: SwipeDirection, fromX: Double, fromY: Double, distance: Double = 300, steps: Int = 20) throws {
         guard connected else { throw InputInjectorError.notConnected }
         try ensureFocus()
         try validatePoint(x: fromX, y: fromY)
 
-        if verbose { FileHandle.standardError.write(Data("[iphonebase] Swipe \(direction) from (\(fromX), \(fromY)) dist \(distance)\n".utf8)) }
-
-        sendHeartbeat()
-        usleep(50_000)
-
-        let (dx, dy): (Double, Double) = {
-            switch direction {
-            case .up:    return (0, -distance)
-            case .down:  return (0, distance)
-            case .left:  return (-distance, 0)
-            case .right: return (distance, 0)
-            }
-        }()
-
-        CGAssociateMouseAndMouseCursorPosition(boolean_t(0))
-
-        // Warp cursor to start position
-        CGWarpMouseCursorPosition(CGPoint(x: fromX, y: fromY))
-        usleep(15_000)
-
-        // Nudge-sync
-        var nudge1 = PointingReport()
-        nudge1.x = 1
-        sendRequest(.postPointingReport, payload: nudge1.toBytes())
-        usleep(10_000)
-        var nudge2 = PointingReport()
-        nudge2.x = -1
-        sendRequest(.postPointingReport, payload: nudge2.toBytes())
-        usleep(10_000)
-
-        // Mouse down
-        var down = PointingReport()
-        down.buttons = 0x01
-        sendRequest(.postPointingReport, payload: down.toBytes())
-        usleep(50_000)
-
-        // Drag in steps using relative moves
-        let stepDx = dx / Double(steps)
-        let stepDy = dy / Double(steps)
-
-        for _ in 0..<steps {
-            var move = PointingReport()
-            move.buttons = 0x01  // keep button held
-            move.x = Int8(clamping: Int(stepDx))
-            move.y = Int8(clamping: Int(stepDy))
-            sendRequest(.postPointingReport, payload: move.toBytes())
-            usleep(10_000)
+        // Calculate end point based on direction
+        var toX = fromX
+        var toY = fromY
+        switch direction {
+        case .up:    toY -= distance
+        case .down:  toY += distance
+        case .left:  toX -= distance
+        case .right: toX += distance
         }
 
-        // Mouse up
-        let up = PointingReport()
-        sendRequest(.postPointingReport, payload: up.toBytes())
-        usleep(50_000)
+        if verbose { FileHandle.standardError.write(Data("[iphonebase] Swipe \(direction) from (\(Int(fromX)), \(Int(fromY))) to (\(Int(toX)), \(Int(toY))) via HID pointing\n".utf8)) }
 
-        CGAssociateMouseAndMouseCursorPosition(boolean_t(1))
+        let durationMs = 300
+        let stepDelayUs = UInt32(max(durationMs, 1) * 1000 / steps)
+        let totalDx = toX - fromX
+        let totalDy = toY - fromY
+
+        withMouseIsolated {
+            // Warp cursor to start and sync virtual device
+            CGWarpMouseCursorPosition(CGPoint(x: fromX, y: fromY))
+            usleep(10_000)
+            nudgeSync()
+
+            // Button down — start immediately, no hold
+            var down = PointingReport()
+            down.buttons = 0x01
+            sendPointingReport(down)
+
+            // Interpolated movement with button held
+            for i in 1...steps {
+                let progress = Double(i) / Double(steps)
+                let targetX = fromX + totalDx * progress
+                let targetY = fromY + totalDy * progress
+
+                // Warp system cursor to interpolated position
+                CGWarpMouseCursorPosition(CGPoint(x: targetX, y: targetY))
+
+                // Send relative movement via HID pointing (clamped to Int8 range)
+                let dx = Int8(clamping: Int(totalDx / Double(steps)))
+                let dy = Int8(clamping: Int(totalDy / Double(steps)))
+                var move = PointingReport()
+                move.buttons = 0x01  // keep button held
+                move.x = dx
+                move.y = dy
+                sendPointingReport(move)
+                usleep(stepDelayUs)
+            }
+
+            // Release button
+            var up = PointingReport()
+            up.buttons = 0x00
+            sendPointingReport(up)
+            usleep(10_000)
+        }
 
         if verbose { FileHandle.standardError.write(Data("[iphonebase] Swipe complete\n".utf8)) }
     }
 
-    /// Drag from one point to another (arbitrary point-to-point)
-    public func drag(fromX: Double, fromY: Double, toX: Double, toY: Double, steps: Int = 20) throws {
+    /// Drag from one point to another using Karabiner HID pointing.
+    /// Includes a 150ms initial hold to trigger iOS drag/selection mode
+    /// (this differentiates drag from swipe).
+    public func drag(fromX: Double, fromY: Double, toX: Double, toY: Double, steps: Int = 60) throws {
         guard connected else { throw InputInjectorError.notConnected }
         try ensureFocus()
         try validatePoint(x: fromX, y: fromY)
 
-        let dx = toX - fromX
-        let dy = toY - fromY
+        let totalDx = toX - fromX
+        let totalDy = toY - fromY
+        let durationMs = 1000
+        let stepDelayUs = UInt32(max(durationMs, 1) * 1000 / steps)
 
-        if verbose { FileHandle.standardError.write(Data("[iphonebase] Drag from (\(fromX), \(fromY)) to (\(toX), \(toY))\n".utf8)) }
+        if verbose { FileHandle.standardError.write(Data("[iphonebase] Drag from (\(Int(fromX)), \(Int(fromY))) to (\(Int(toX)), \(Int(toY))) via HID pointing\n".utf8)) }
 
-        sendHeartbeat()
-        usleep(50_000)
+        withMouseIsolated {
+            // Warp cursor to start and sync virtual device
+            CGWarpMouseCursorPosition(CGPoint(x: fromX, y: fromY))
+            usleep(10_000)
+            nudgeSync()
 
-        // Auto-increase steps if distance exceeds Int8 range per step
-        let maxPerStep = 127.0
-        let requiredSteps = max(steps, Int(ceil(max(abs(dx), abs(dy)) / maxPerStep)))
+            // Button down with initial hold — triggers iOS drag/selection mode
+            var down = PointingReport()
+            down.buttons = 0x01
+            sendPointingReport(down)
+            usleep(150_000)  // 150ms hold before moving
 
-        CGAssociateMouseAndMouseCursorPosition(boolean_t(0))
+            // Interpolated movement with button held
+            for i in 1...steps {
+                let progress = Double(i) / Double(steps)
+                let targetX = fromX + totalDx * progress
+                let targetY = fromY + totalDy * progress
 
-        // Warp cursor to start position
-        CGWarpMouseCursorPosition(CGPoint(x: fromX, y: fromY))
-        usleep(15_000)
+                CGWarpMouseCursorPosition(CGPoint(x: targetX, y: targetY))
 
-        // Nudge-sync
-        var nudge1 = PointingReport()
-        nudge1.x = 1
-        sendRequest(.postPointingReport, payload: nudge1.toBytes())
-        usleep(10_000)
-        var nudge2 = PointingReport()
-        nudge2.x = -1
-        sendRequest(.postPointingReport, payload: nudge2.toBytes())
-        usleep(10_000)
+                let dx = Int8(clamping: Int(totalDx / Double(steps)))
+                let dy = Int8(clamping: Int(totalDy / Double(steps)))
+                var move = PointingReport()
+                move.buttons = 0x01
+                move.x = dx
+                move.y = dy
+                sendPointingReport(move)
+                usleep(stepDelayUs)
+            }
 
-        // Mouse down
-        var down = PointingReport()
-        down.buttons = 0x01
-        sendRequest(.postPointingReport, payload: down.toBytes())
-        usleep(50_000)
-
-        // Drag in steps using relative moves
-        let stepDx = dx / Double(requiredSteps)
-        let stepDy = dy / Double(requiredSteps)
-
-        for _ in 0..<requiredSteps {
-            var move = PointingReport()
-            move.buttons = 0x01
-            move.x = Int8(clamping: Int(stepDx))
-            move.y = Int8(clamping: Int(stepDy))
-            sendRequest(.postPointingReport, payload: move.toBytes())
+            // Release button
+            var up = PointingReport()
+            up.buttons = 0x00
+            sendPointingReport(up)
             usleep(10_000)
         }
-
-        // Mouse up
-        let up = PointingReport()
-        sendRequest(.postPointingReport, payload: up.toBytes())
-        usleep(50_000)
-
-        CGAssociateMouseAndMouseCursorPosition(boolean_t(1))
 
         if verbose { FileHandle.standardError.write(Data("[iphonebase] Drag complete\n".utf8)) }
     }
@@ -533,23 +535,30 @@ public final class InputInjector {
         sendKeystroke(keycode: keycode, modifiers: modifiers)
     }
 
-    /// Scroll vertically
+    /// Scroll via HID verticalWheel reports through the Karabiner virtual pointing device.
+    /// "scroll down" = content moves up, "scroll up" = content moves down.
     public func scroll(direction: ScrollDirection, clicks: Int = 3) throws {
         guard connected else { throw InputInjectorError.notConnected }
         try ensureFocus()
 
-        let wheelValue: Int8 = {
-            switch direction {
-            case .up: return 1
-            case .down: return -1
-            }
-        }()
+        guard let bounds = windowBounds else { return }
 
-        for _ in 0..<clicks {
+        // Warp cursor to window center so scroll targets the mirroring window
+        withMouseIsolated {
+            CGWarpMouseCursorPosition(CGPoint(x: bounds.midX, y: bounds.midY))
+            usleep(10_000)
+            nudgeSync()
+        }
+
+        // HID scroll wheel: positive = scroll up (content down), negative = scroll down (content up)
+        let wheelDelta: Int8 = direction == .down ? -1 : 1
+
+        for i in 0..<clicks {
+            if verbose { FileHandle.standardError.write(Data("[iphonebase] Scroll \(direction) tick \(i + 1)/\(clicks)\n".utf8)) }
             var report = PointingReport()
-            report.verticalWheel = wheelValue
-            sendRequest(.postPointingReport, payload: report.toBytes())
-            usleep(50_000)
+            report.verticalWheel = wheelDelta
+            sendPointingReport(report)
+            usleep(50_000)  // 50ms between scroll ticks
         }
     }
 
@@ -564,6 +573,9 @@ public final class InputInjector {
         writeLE64(&kbParams, offset: 16, value: 0)
         sendRequest(.keyboardInitialize, payload: kbParams)
 
+        // Pointing device — used for swipe/scroll/drag gestures.
+        // iPhone Mirroring requires HID pointing click-drag for swipe gestures;
+        // CGEvent scroll wheel events are ignored.
         sendRequest(.pointingInitialize)
     }
 
@@ -589,6 +601,33 @@ public final class InputInjector {
         msg.append(UInt8((deadline >> 16) & 0xFF))
         msg.append(UInt8((deadline >> 24) & 0xFF))
         rawSend(msg)
+    }
+
+    /// Send a pointing input report to the Karabiner virtual HID pointing device.
+    private func sendPointingReport(_ report: PointingReport) {
+        sendRequest(.postPointingReport, payload: report.toBytes())
+    }
+
+    /// Nudge the virtual pointing device 1px right then 1px left to synchronize
+    /// it with the system cursor position after a CGWarp.
+    private func nudgeSync() {
+        var nudgeRight = PointingReport()
+        nudgeRight.x = 1
+        sendPointingReport(nudgeRight)
+        usleep(5_000)
+
+        var nudgeBack = PointingReport()
+        nudgeBack.x = -1
+        sendPointingReport(nudgeBack)
+        usleep(10_000)
+    }
+
+    /// Execute a block with the physical mouse disconnected from the cursor.
+    /// This prevents physical mouse movement from interfering with programmatic input.
+    private func withMouseIsolated(_ body: () -> Void) {
+        CGAssociateMouseAndMouseCursorPosition(boolean_t(0))
+        body()
+        CGAssociateMouseAndMouseCursorPosition(boolean_t(1))
     }
 
     private func sendKeystroke(keycode: UInt16, modifiers: HIDModifier) {
@@ -623,8 +662,12 @@ public final class InputInjector {
         let sent = data.withUnsafeBufferPointer { buf in
             send(sockfd, buf.baseAddress, buf.count, 0)
         }
-        if verbose && sent != data.count {
-            FileHandle.standardError.write(Data("[iphonebase] rawSend FAILED: sent=\(sent), expected=\(data.count), errno=\(errno)\n".utf8))
+        if verbose {
+            if sent == data.count {
+                FileHandle.standardError.write(Data("[rawSend] OK sent=\(sent) bytes\n".utf8))
+            } else {
+                FileHandle.standardError.write(Data("[rawSend] FAILED sent=\(sent) expected=\(data.count) errno=\(errno)\n".utf8))
+            }
         }
     }
 

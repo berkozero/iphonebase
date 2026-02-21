@@ -26,10 +26,15 @@ struct DragCommand: AsyncParsableCommand {
     @Flag(name: .long, help: "Output as JSON.")
     var json = false
 
+    @Flag(name: [.short, .long], help: "Verbose debug output.")
+    var verbose = false
+
     func run() async throws {
-        let wm = WindowManager()
+        var wm = WindowManager()
+        wm.verbose = verbose
 
         let injector = InputInjector()
+        injector.verbose = verbose
         injector.windowManager = wm
         try injector.connect()
         defer { injector.disconnect() }

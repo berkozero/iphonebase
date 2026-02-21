@@ -157,45 +157,6 @@ struct OCREngineTests {
         #expect(elements.isEmpty, "Expected no elements, got \(elements.count)")
     }
 
-    // MARK: - findElements matching
-
-    @Test("Exact match takes priority over substring")
-    func exactMatch() throws {
-        let image = try #require(createTestImage(texts: [
-            ("Settings", CGPoint(x: 100, y: 100), 40),
-            ("General Settings", CGPoint(x: 100, y: 300), 40),
-        ]))
-
-        let ocr = OCREngine()
-        let matches = try ocr.findElements(matching: "Settings", in: image)
-        #expect(!matches.isEmpty, "Expected at least one match")
-    }
-
-    @Test("No match returns empty array")
-    func noMatch() throws {
-        let image = try #require(createTestImage(texts: [
-            ("Settings", CGPoint(x: 100, y: 100), 40),
-        ]))
-
-        let ocr = OCREngine()
-        let matches = try ocr.findElements(matching: "XyzNotHere", in: image)
-        #expect(matches.isEmpty, "Expected no matches")
-    }
-
-    @Test("Case insensitive matching")
-    func caseInsensitive() throws {
-        let image = try #require(createTestImage(texts: [
-            ("Settings", CGPoint(x: 100, y: 100), 40),
-        ]))
-
-        let ocr = OCREngine()
-        let upper = try ocr.findElements(matching: "SETTINGS", in: image)
-        let lower = try ocr.findElements(matching: "settings", in: image)
-
-        #expect(!upper.isEmpty, "Expected match for 'SETTINGS'")
-        #expect(!lower.isEmpty, "Expected match for 'settings'")
-    }
-
     // MARK: - Performance
 
     @Test("Single frame OCR completes within 2 seconds")

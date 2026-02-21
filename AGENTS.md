@@ -1,6 +1,6 @@
 # iphonebase
 
-Swift CLI to control iPhone via macOS iPhone Mirroring. Built for AI agents (OpenClaw, Claude Code, MCP) and standalone terminal use.
+Swift CLI to control iPhone via macOS iPhone Mirroring. Built for AI agents (OpenClaw, Claude Code) — the CLI is a thin perceive-and-act bridge, all reasoning lives in the agent.
 
 ## Tech Stack
 
@@ -31,12 +31,27 @@ Sources/
     ActionResult.swift   # Shared JSON response envelope
   iphonebase/            # CLI executable
     IPhoneBase.swift     # Entry point, command registration
-    Commands/            # One file per command (13 commands)
+    Commands/            # One file per command (11 commands)
 skills/
   iphonebase/SKILL.md   # OpenClaw skill definition
 Tests/
-  IPhoneBaseCoreTests/   # Unit tests (HIDKeyMap)
+  IPhoneBaseCoreTests/   # Unit tests
 ```
+
+## Design Philosophy
+
+**Perceive → Reason → Act.** The CLI provides two things:
+1. **Perception:** `perceive --json` returns screenshot + OCR + grid metadata
+2. **Actions:** `tap`, `swipe`, `scroll`, `drag`, `type`, `key`, `home`
+
+The agent (LLM) does all reasoning. No OCR-based decision-making in the CLI.
+
+## Commands (11)
+
+| Category | Commands |
+|----------|----------|
+| **Perceive** | `perceive`, `screenshot`, `status`, `doctor` |
+| **Act** | `tap`, `swipe`, `scroll`, `drag`, `type`, `key`, `home` |
 
 ## Adding a New Command
 
@@ -45,6 +60,7 @@ Tests/
 3. Add `XxxCommand.self` to the `subcommands` array in `IPhoneBase.swift`
 4. Include `--json` flag using the shared `ActionResult<T>` envelope
 5. Update `skills/iphonebase/SKILL.md` with the new command docs
+6. Action commands must be "dumb executors" — no embedded OCR or reasoning
 
 ## Code Conventions
 
@@ -58,15 +74,17 @@ Tests/
 
 ## Coordinate System (critical)
 
-- ScreenCapture captures at 2x retina resolution
-- OCR (Vision) returns normalized coords with bottom-left origin — must invert Y
-- `tap --text` handles conversion automatically; raw `tap x y` is relative to window (screen points)
+- ScreenCapture captures at 2x retina resolution (image pixels)
+- OCR (Vision) returns normalized coords with bottom-left origin — `OCREngine` inverts Y
+- `perceive` scales all coordinates (OCR elements + grid cells) to **window-relative screen points**
+- `tap x y` expects window-relative screen points — coordinates from `perceive` flow directly
 - All InputInjector operations use absolute screen coordinates (`window.bounds.origin + offset`)
 
 ## Input Injection Gotchas
 
-- iPhone Mirroring blocks CGEvent clicks — only Karabiner virtual HID works
-- Tap sequence: `CGWarpMouseCursorPosition` → nudge-sync virtual pointer (3x 1px/-1px) → click via HID
+- iPhone Mirroring accepts CGEvent mouse input for taps
+- Swipe/drag uses Karabiner HID pointing click-drag (CGEvent scroll wheel is ignored)
+- Tap sequence: `CGWarpMouseCursorPosition` → CGEvent mouseDown/mouseUp
 - Timing delays (`usleep`) throughout InputInjector are tuned values, not arbitrary
 - Karabiner daemon must be running (not just installed)
 

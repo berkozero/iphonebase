@@ -29,10 +29,16 @@ swift test                   # tests
 - Call `wm.bringToFront()` before any input injection
 - Errors: typed enums with `CustomStringConvertible`; throw `ExitCode.failure` for user errors
 
+## Design Philosophy
+- **Perceive → Reason → Act:** `perceive` gives AI eyes, action commands are hands, AI does all reasoning
+- No OCR-based decision-making in action commands — agent provides coordinates from `perceive`
+- Action commands are "dumb executors": `tap x y`, `swipe up`, `type "text"`
+
 ## Coordinate System (critical)
 - ScreenCapture captures at 2x retina resolution
 - OCR (Vision) returns normalized coords with bottom-left origin — must invert Y
-- `tap --text` handles conversion automatically; raw `tap x y` is relative to window (screen points)
+- `perceive` scales all coordinates to window-relative screen points
+- `tap x y` expects window-relative screen points — coordinates from `perceive` flow directly
 - All InputInjector operations use absolute screen coordinates (`window.bounds.origin + offset`)
 
 ## Input Injection Gotchas

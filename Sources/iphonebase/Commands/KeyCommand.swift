@@ -17,6 +17,9 @@ struct KeyCommand: AsyncParsableCommand {
     @Flag(name: .long, help: "Output as JSON.")
     var json = false
 
+    @Flag(name: [.short, .long], help: "Verbose debug output.")
+    var verbose = false
+
     func run() async throws {
         guard let keycode = HIDKeyMap.namedKey(key) else {
             print("Unknown key: \(key)")
@@ -37,9 +40,11 @@ struct KeyCommand: AsyncParsableCommand {
             }
         }
 
-        let wm = WindowManager()
+        var wm = WindowManager()
+        wm.verbose = verbose
 
         let injector = InputInjector()
+        injector.verbose = verbose
         injector.windowManager = wm
         try injector.connect()
         defer { injector.disconnect() }

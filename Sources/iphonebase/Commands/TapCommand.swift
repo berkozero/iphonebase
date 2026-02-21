@@ -5,19 +5,16 @@ import Foundation
 struct TapCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "tap",
-        abstract: "Tap at coordinates, on a text element, or on a grid cell."
+        abstract: "Tap at coordinates or on a grid cell."
     )
 
-    @Argument(help: "X coordinate (ignored if --text or --cell is used).")
+    @Argument(help: "X coordinate (ignored if --cell is used).")
     var x: Double?
 
-    @Argument(help: "Y coordinate (ignored if --text or --cell is used).")
+    @Argument(help: "Y coordinate (ignored if --cell is used).")
     var y: Double?
 
-    @Option(name: .long, help: "Find element by text (OCR) and tap its center.")
-    var text: String?
-
-    @Option(name: .long, help: "Tap the center of a grid cell (e.g., B3). Use with 'screenshot --grid'.")
+    @Option(name: .long, help: "Tap the center of a grid cell (e.g., B3). Use with 'perceive' grid metadata.")
     var cell: String?
 
     @Flag(name: .long, help: "Double-tap instead of single tap.")
@@ -36,8 +33,8 @@ struct TapCommand: AsyncParsableCommand {
     var verbose = false
 
     func validate() throws {
-        if text == nil && cell == nil && (x == nil || y == nil) {
-            throw ValidationError("Provide X Y coordinates, --text, or --cell to specify a tap target.")
+        if cell == nil && (x == nil || y == nil) {
+            throw ValidationError("Provide X Y coordinates or --cell to specify a tap target.")
         }
     }
 
@@ -88,37 +85,6 @@ struct TapCommand: AsyncParsableCommand {
             if !json {
                 print("Cell \(cellLabel.uppercased()) -> screen (\(Int(tapX)), \(Int(tapY)))")
             }
-        } else if let searchText = text {
-            // OCR-based tap
-            let capture = ScreenCapture(windowManager: wm)
-            let ocr = OCREngine()
-            let image = try await capture.captureWindow()
-            let matches = try ocr.findElements(matching: searchText, in: image)
-
-            guard let match = matches.first else {
-                if json {
-                    let result = ActionResult<EmptyData>(
-                        success: false,
-                        action: "tap",
-                        error: "No element found matching '\(searchText)'"
-                    )
-                    result.printJSON()
-                } else {
-                    print("No element found matching \"\(searchText)\"")
-                }
-                throw ExitCode.failure
-            }
-
-            // Convert image coordinates to screen coordinates
-            let scaleX = bounds.width / Double(image.width)
-            let scaleY = bounds.height / Double(image.height)
-
-            tapX = bounds.origin.x + Double(match.centerX) * scaleX
-            tapY = bounds.origin.y + Double(match.centerY) * scaleY
-
-            if !json {
-                print("Found \"\(match.text)\" at screen (\(Int(tapX)), \(Int(tapY)))")
-            }
         } else {
             // Direct coordinate tap — coordinates are relative to the mirroring window
             tapX = bounds.origin.x + x!
@@ -142,12 +108,11 @@ struct TapCommand: AsyncParsableCommand {
                 action: actionName,
                 x: Int(tapX),
                 y: Int(tapY),
-                text: text ?? "",
                 cell: cell?.uppercased() ?? ""
             )
             let result = ActionResult.ok(action: actionName, data: data)
             result.printJSON()
-        } else if text == nil && cell == nil {
+        } else if cell == nil {
             print("Tapped at (\(Int(tapX)), \(Int(tapY)))")
         }
     }
@@ -157,6 +122,5 @@ private struct TapData: Encodable {
     let action: String
     let x: Int
     let y: Int
-    let text: String
     let cell: String
 }

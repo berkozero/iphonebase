@@ -57,46 +57,63 @@ Run `iphonebase doctor` to check all prerequisites at once.
 
 ## Real-World Examples
 
+All examples follow the **perceive → reason → act** loop. The AI agent reads the `perceive` output, reasons about what to do, then acts.
+
 ### Send an iMessage
 
 ```bash
-iphonebase launch "Messages"
-iphonebase wait-for "Messages" --timeout 5
-iphonebase tap --text "Mom"
-iphonebase wait-for "iMessage" --timeout 5
+iphonebase key 3 --modifier cmd          # open Spotlight
+iphonebase type "Messages"               # search for Messages
+iphonebase key enter                     # open it
+sleep 1
+iphonebase perceive --json               # see Messages screen
+# Agent reads image, finds "Mom" at (200, 340)
+iphonebase tap 200 340                   # tap on Mom's conversation
+sleep 1
+iphonebase perceive --json               # see conversation
 iphonebase type "Running 10 min late!"
-iphonebase tap --text "Send"
-iphonebase wait-for "Delivered" --timeout 10
-```
-
-### Check the weather
-
-```bash
-iphonebase launch "Weather"
-iphonebase wait-for "Weather" --timeout 5
-iphonebase describe --json | jq '.data.elements[].text'
+iphonebase perceive --json               # find Send button at (350, 680)
+iphonebase tap 350 680                   # tap Send
 ```
 
 ### Navigate Settings
 
 ```bash
-iphonebase launch "Settings"
-iphonebase wait-for "Settings" --timeout 5
-iphonebase tap --text "General"
-iphonebase wait-for "About" --timeout 5
-iphonebase tap --text "About"
-iphonebase wait-for "iOS Version" --timeout 5
-iphonebase describe --json   # read the full screen
+iphonebase key 3 --modifier cmd          # open Spotlight
+iphonebase type "Settings"
+iphonebase key enter
+sleep 1
+iphonebase perceive --json               # see Settings screen
+# Agent finds "General" at (200, 340)
+iphonebase tap 200 340
+sleep 1
+iphonebase perceive --json               # see General screen
+# Agent finds "About" at (200, 280)
+iphonebase tap 200 280
+sleep 1
+iphonebase perceive --json               # read iOS version from screen
 ```
 
 ### Scroll through a feed
 
 ```bash
-iphonebase launch "Instagram"
-iphonebase wait-for "Instagram" --timeout 5
-iphonebase scroll down --clicks 5
-iphonebase screenshot --output feed.png
+iphonebase perceive --json               # see current screen
+iphonebase scroll down --clicks 5        # scroll content
+sleep 0.5
+iphonebase perceive --json               # see new content
 ```
+
+### Tap an app icon (grid cell)
+
+```bash
+iphonebase perceive --json               # get screen state
+# Agent reads grid image, sees Gmail icon in cell B12
+iphonebase tap --cell B12                # tap the icon by grid cell
+sleep 1
+iphonebase perceive --json               # verify app opened
+```
+
+Use grid cells for icons, toggles, and non-text elements. Use OCR coordinates for text labels and menu items. See [Grid Mode](#grid-mode-for-vision-model-agents) below.
 
 ## Grid Mode for Vision-Model Agents
 
@@ -134,43 +151,32 @@ No jailbreak. No developer account. No app installation on the phone. Your iPhon
 
 | Command | Description |
 |---|---|
-| `doctor` | Run diagnostics on all prerequisites |
-| `status` | Check if iPhone Mirroring is available |
-| `screenshot` | Capture the iPhone screen as PNG (supports `--grid`) |
-| `describe` | OCR — detect all text on screen with coordinates |
-| `wait-for` | Poll until specific text appears (or timeout) |
-| `tap` | Tap by coordinates, text, or grid cell |
+| `perceive` | Screenshot + OCR + grid metadata — the agent's primary input |
+| `tap` | Tap by coordinates or grid cell |
 | `swipe` | Swipe up/down/left/right |
-| `scroll` | Scroll via mouse wheel |
+| `scroll` | Scroll up/down |
 | `drag` | Point-to-point drag |
 | `type` | Type text character by character |
 | `key` | Press a key with optional modifiers |
 | `home` | Go to iPhone home screen |
-| `launch` | Open an app by name via Spotlight |
+| `screenshot` | Capture the iPhone screen as PNG (supports `--grid`) |
+| `status` | Check if iPhone Mirroring is available |
+| `doctor` | Run diagnostics on all prerequisites |
 
 Every command supports `--json` for structured machine-readable output.
 
 ### Command Examples
 
 ```bash
-# Screenshot (with optional grid overlay for vision-model agents)
-iphonebase screenshot --output screen.png
-iphonebase screenshot --grid --output grid.png
+# Perceive: screenshot + OCR + grid metadata (agent's primary input)
+iphonebase perceive --json
+iphonebase perceive --json --base64    # inline image for OpenClaw
 
-# Read the screen via OCR
-iphonebase describe
-iphonebase describe --json
-
-# Tap by text (recommended — handles coordinate conversion)
-iphonebase tap --text "Settings"
-iphonebase tap --text "Send" --double
-iphonebase tap --text "Photos" --long
-
-# Tap by grid cell (use with screenshot --grid)
-iphonebase tap --cell B3
-
-# Tap by raw coordinates (relative to mirroring window)
+# Tap by coordinates (from perceive output) or grid cell
 iphonebase tap 200 400
+iphonebase tap --cell B3
+iphonebase tap 200 400 --double
+iphonebase tap 200 400 --long
 
 # Swipe and scroll
 iphonebase swipe up
@@ -184,13 +190,14 @@ iphonebase drag 100 200 300 400 --steps 30
 iphonebase type "hello world"
 iphonebase key enter
 iphonebase key a --modifier cmd
+iphonebase key 3 --modifier cmd    # open Spotlight on iPhone
 
 # Navigate
 iphonebase home
-iphonebase launch "Messages"
 
-# Wait for screen transition
-iphonebase wait-for "General" --timeout 10
+# Screenshot (with optional grid overlay)
+iphonebase screenshot --output screen.png
+iphonebase screenshot --grid --output grid.png
 ```
 
 ### JSON Output
@@ -222,12 +229,12 @@ Then ask your agent to interact with your phone:
 > "Open Settings on my iPhone and check the iOS version"
 
 OpenClaw will automatically use iphonebase to:
-1. `launch "Settings"` — open the Settings app
-2. `wait-for "Settings"` — confirm it loaded
-3. `tap --text "General"` — navigate to General
-4. `wait-for "About"` — wait for the screen
-5. `tap --text "About"` — open the About page
-6. `describe --json` — read the iOS version and report back
+1. `perceive --json --base64` — capture current screen state (image + OCR + grid)
+2. Decide next action (LLM) based on what it sees
+3. `tap 200 340` — tap "General" using coordinates from perceive
+4. `perceive --json --base64` — verify navigation
+5. `tap 200 280` — tap "About"
+6. `perceive --json --base64` — read the iOS version and report back
 
 The skill definition lives in `skills/iphonebase/SKILL.md` — it teaches agents the full command set, recommended workflow, and coordinate system.
 
@@ -247,7 +254,7 @@ iphonebase is a plain CLI with `--json` output. Any agent that can execute shell
 import subprocess, json
 
 result = subprocess.run(
-    ["iphonebase", "describe", "--json"],
+    ["iphonebase", "perceive", "--json"],
     capture_output=True, text=True
 )
 screen = json.loads(result.stdout)
@@ -257,20 +264,20 @@ for element in screen["data"]["elements"]:
 
 ## Agent Workflow
 
-The recommended automation loop for AI agents:
+The recommended **perceive → reason → act** loop:
 
 ```
-1. iphonebase doctor            # Verify prerequisites (first run)
-2. iphonebase status --json     # Confirm mirroring is active
-3. iphonebase describe --json   # Read current screen (or screenshot --grid --json)
+1. iphonebase doctor            # Verify prerequisites (first run only)
+2. iphonebase perceive --json   # Read current screen state
+3. Read the gridImagePath file  # See the screen (Claude Code)
 4. Reason about which element to interact with
-5. Act: tap / type / swipe / scroll / drag / key / launch / home
-6. iphonebase wait-for "expected text" --timeout 5
-7. iphonebase describe --json   # Verify action had expected effect
-   ↳ Repeat 3–7 for multi-step tasks
+5. Act: tap / type / swipe / scroll / drag / key / home
+6. sleep 0.5-1                  # Let UI settle
+7. iphonebase perceive --json   # Verify action had expected effect
+   ↳ Repeat 2–7 for multi-step tasks
 ```
 
-Use `wait-for` between actions instead of hardcoded delays.
+All coordinates from `perceive` flow directly into `tap x y` — no conversion needed.
 
 ## Architecture
 
