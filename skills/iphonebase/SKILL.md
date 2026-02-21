@@ -10,11 +10,11 @@ metadata:
     os: ["darwin"]
     requires:
       bins: ["iphonebase"]
-    install: |
-      git clone https://github.com/berkozero/iphonebase.git
-      cd iphonebase
-      swift build -c release
-      sudo cp .build/release/iphonebase /usr/local/bin/
+    install:
+      - kind: brew
+        formula: berkozero/iphonebase/iphonebase
+        bins: ["iphonebase"]
+        os: ["darwin"]
 ---
 
 # iphonebase
