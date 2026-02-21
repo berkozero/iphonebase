@@ -218,13 +218,11 @@ All commands return a consistent envelope when `--json` is passed:
 
 ### OpenClaw
 
-Install the [OpenClaw](https://github.com/openclaw/openclaw) skill for automatic discovery:
-
 ```bash
-cp -r skills/iphonebase ~/.openclaw/skills/
+npx skills add https://github.com/berkozero/iphonebase --skill iphonebase
 ```
 
-Then ask your agent to interact with your phone:
+The skill auto-installs `iphonebase` via Homebrew if it's not already on your PATH. Then just ask your agent:
 
 > "Open Settings on my iPhone and check the iOS version"
 
@@ -243,7 +241,7 @@ The skill definition lives in `skills/iphonebase/SKILL.md` — it teaches agents
 `iphonebase` ships with `CLAUDE.md` and `AGENTS.md` — Claude Code picks up the project context automatically. Just ensure the binary is on your `PATH`:
 
 ```bash
-brew install iphonebase   # or build from source
+brew tap berkozero/iphonebase && brew install iphonebase
 ```
 
 ### Any AI Agent
